@@ -1,0 +1,68 @@
+# =============================================================================
+# SENSITIVE CREDENTIALS & SECRETS (NEVER PUSH TO GITHUB)
+# =============================================================================
+.env
+.env.local
+.env.*.local
+*.env
+!*.env.example
+!.env.example
+
+# Google Service Account keys & credentials
+credentials.json
+*credentials*.json
+*service_account*.json
+*.pem
+*.key
+
+# =============================================================================
+# BOT RUNTIME DATA & LOGS
+# =============================================================================
+bot_state.json
+*.log
+trader_bot.log
+
+# =============================================================================
+# PYTHON ENVIRONMENTS & ARTIFACTS
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =============================================================================
+# IDE & OPERATING SYSTEM ARTIFACTS
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
