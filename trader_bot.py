@@ -2152,6 +2152,128 @@ def handle_telegram_charts(client: BinanceClient, chat_id: str, requested_sym: O
         )
 
 
+def ask_groq_trading_question(question: str, live_context: str = "") -> str:
+    """
+    Sends a user trading question to Groq AI (qwen/qwen3.8-27b) with an institutional
+    crypto quantitative analyst prompt. Formats and returns an institutional, actionable answer.
+    """
+    if not GROQ_API_KEY:
+        return "⚠️ Groq API key is not configured in `.env` (`GROQ_API_KEY`). Please configure it to get AI trading answers."
+
+    system_prompt = (
+        "You are an elite institutional quantitative cryptocurrency analyst and Smart Money Concepts (ICT/SMC) trading mentor.\n"
+        "Your task is to answer user trading questions with high technical precision, practical clarity, and institutional risk management.\n\n"
+        "Core Trading Framework:\n"
+        "1. Smart Money Concepts: Liquidity Sweeps (BSL/SSL), Displacement (ATR expansion), Market Structure Shifts (MSS), Order Blocks (OB), and Fair Value Gaps (FVG).\n"
+        "2. Daily Key Levels: Previous Day High (PDH), Low (PDL), Open (PDO), Close (PDC).\n"
+        "3. Risk Management: Position sizing (1-2% max risk per trade), RR >= 2.0, precise invalidation (Stop Loss), and dynamic targets.\n"
+        "4. Tone: Professional, realistic, direct. If the user asks in Hindi or Hinglish, reply in clear, professional Hinglish. If in English, reply in English.\n"
+        "5. Keep the answer structured using bold headings, bullet points, and concise explanations so it reads beautifully on Telegram.\n"
+        "6. Always include a short risk disclaimer at the end."
+    )
+
+    user_content = f"User Question: {question}"
+    if live_context:
+        user_content += f"\n\nLive Market & Quantitative Data:\n{live_context}"
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 800,
+    }
+
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                raw_content = resp.json()["choices"][0]["message"]["content"].strip()
+                return raw_content
+            elif resp.status_code == 429:
+                time.sleep(2)
+                continue
+            else:
+                log.warning("Groq AI question error HTTP %s: %s", resp.status_code, scrub(resp.text))
+                return f"⚠️ Groq AI API error (HTTP {resp.status_code}). Please try again."
+        except Exception as exc:
+            log.warning("Groq AI question request failed: %s", scrub(exc))
+            time.sleep(1)
+
+    return "⚠️ Groq AI se connect karne me problem aayi. Please ek baar phir try karein."
+
+
+def handle_telegram_trading_question(client: BinanceClient, chat_id: str, question: str) -> None:
+    """Handles an interactive trading question from Telegram and replies using Groq AI."""
+    clean_q = question.strip()
+    # Strip common command prefixes
+    for prefix in ("/ask", "ask", "/ai", "ai", "/q", "q"):
+        if clean_q.lower().startswith(prefix + " ") or clean_q.lower().startswith(prefix + ":"):
+            clean_q = clean_q[len(prefix):].strip(": ")
+            break
+
+    if not clean_q or len(clean_q) < 3:
+        send_telegram(
+            "❓ *Aapka sawal bahut chota hai.* Kripya apna trading sawal detail me puchein.\n\n"
+            "*Examples:*\n"
+            "• `BTC me long entry kaha le sakte hain?`\n"
+            "• `Order Block aur FVG me kya difference hai?`\n"
+            "• `Risk-to-reward ratio kaise calculate karein?`\n"
+            "• `/ask ETH ka current trend aur key levels kya hain?`",
+            chat_id=chat_id,
+            parse_mode="Markdown"
+        )
+        return
+
+    send_telegram(f"🧠 *Groq AI Analyst ({GROQ_MODEL}) aapke trading question ka analysis kar raha hai...*", chat_id=chat_id, parse_mode="Markdown")
+
+    # Detect if any monitored symbol is mentioned to provide live quantitative context
+    live_context = ""
+    words = [w.strip(",.!?#/@\"'").upper() for w in clean_q.split()]
+    detected_sym = None
+    for s in SYMBOLS:
+        base = s.replace("USDT", "")
+        if base in words or s in words or base.lower() in clean_q.lower():
+            detected_sym = s
+            break
+
+    if detected_sym:
+        try:
+            cur_price = client.price(detected_sym)
+            pdo, pdh, pdl, pdc = get_daily_levels(client, detected_sym)
+            live_context = (
+                f"Asset: {detected_sym}\n"
+                f"Current Live Price: {fmt_price(cur_price)}\n"
+            )
+            if pdh and pdl:
+                live_context += (
+                    f"Previous Day High (PDH): {fmt_price(pdh)}\n"
+                    f"Previous Day Low (PDL): {fmt_price(pdl)}\n"
+                    f"Previous Day Open (PDO): {fmt_price(pdo)}\n"
+                    f"Previous Day Close (PDC): {fmt_price(pdc)}\n"
+                )
+        except Exception as exc:
+            log.warning("Could not fetch live context for %s: %s", detected_sym, exc)
+
+    ai_reply = ask_groq_trading_question(clean_q, live_context=live_context)
+    full_msg = f"💡 *Groq AI Institutional Trading Answer:*\n━━━━━━━━━━━━━━━━━━━━\n{ai_reply}"
+
+    # Split if Telegram message limit (4096) is exceeded
+    if len(full_msg) > 4000:
+        chunks = [full_msg[i:i+3800] for i in range(0, len(full_msg), 3800)]
+        for chunk in chunks:
+            send_telegram(chunk, chat_id=chat_id, parse_mode="Markdown")
+    else:
+        send_telegram(full_msg, chat_id=chat_id, parse_mode="Markdown")
+
+
 def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict) -> None:
     if not TELEGRAM_TOKEN:
         return
@@ -2319,7 +2441,9 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         f"{sheet_line}\n"
                         "💡 *Commands:*\n"
                         "• `chart image` ya `/charts` - Sabhi charts + PD-OHLC levels\n"
+                        "• `chart <coin>` (e.g. `chart btc`) - Single chart image\n"
                         "• `what are doing` ya `kya kar rahe ho` - Analysis report\n"
+                        "• `Ask any trading question` - Groq AI se direct institutional jawab payein\n"
                         "• `end` ya `/end` - Analysis band karein\n"
                         "• `start` ya `/start` - Analysis shuru karein\n"
                         "• `/status` - Bot status dekhein"
@@ -2339,6 +2463,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         "• `chart image` ya `/charts` - *Har symbol ka chart image + PDH, PDL, PDO, PDC*\n"
                         "• `chart <coin>` (e.g. `chart btc`, `chart eth`) - *Single coin chart image*\n"
                         "• `what are doing` ya `kya kar rahe ho` - *Bot Activity & Analysis Report*\n"
+                        "• `Ask any trading question` (e.g. `BTC buy karein ya wait?`, `Order block kya hota hai?`, `/ask <question>`) - *Groq AI Institutional Answer*\n"
                         "• `end` ya `/end` - *Analysis band karein* (Pause 24/7 scan & AI alerts)\n"
                         "• `start` ya `/start` - *Analysis shuru karein* (Resume scan & get live data)\n"
                         "• `/scan` ya `scan` - Instant sweep & OB scan\n"
@@ -2348,6 +2473,11 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         f"Current State: {status_str}"
                     )
                     send_telegram(help_msg, chat_id=chat_id, parse_mode="Markdown")
+                else:
+                    # User asked a trading question or custom query!
+                    # Process with Groq AI Institutional Analyst!
+                    log.info("Trading question / custom query received from %s: '%s'", chat_id, text)
+                    handle_telegram_trading_question(client, chat_id, text)
         except Exception as exc:
             log.warning("Telegram listener error: %s", scrub(exc))
             STOP.wait(3)
