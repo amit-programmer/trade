@@ -26,6 +26,7 @@ import io
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -551,15 +552,24 @@ def telegram_configured() -> bool:
     return bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
 
-def send_telegram(text: str, chat_id: Optional[str] = None, parse_mode: Optional[str] = None) -> bool:
+def send_telegram(
+    text: str,
+    chat_id: Optional[str] = None,
+    parse_mode: Optional[str] = None,
+    reply_to_message_id: Optional[int] = None,
+) -> bool:
     target_chat = chat_id or TELEGRAM_CHAT_ID
     if not (TELEGRAM_TOKEN and target_chat):
         log.warning("Telegram not configured (missing TELEGRAM_BOT_TOKEN or chat_id).")
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": target_chat, "text": text, "disable_web_page_preview": True}
+    payload: Dict[str, Any] = {"chat_id": target_chat, "text": text, "disable_web_page_preview": True}
     if parse_mode:
         payload["parse_mode"] = parse_mode
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
+        payload["allow_sending_without_reply"] = True
+
     for attempt in range(3):
         try:
             resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
@@ -578,13 +588,20 @@ def send_telegram(text: str, chat_id: Optional[str] = None, parse_mode: Optional
     return False
 
 
-def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, chat_id: Optional[str] = None, parse_mode: Optional[str] = "Markdown") -> bool:
+def send_telegram_chart_alert(
+    caption: str,
+    photo_url: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    parse_mode: Optional[str] = "Markdown",
+    reply_to_message_id: Optional[int] = None,
+) -> bool:
     """
     Sends a photo alert via Telegram sendPhoto using the Cloudinary image URL.
     Includes robust fallback:
       - If photo_url is missing or sendPhoto fails, falls back to text-only send_telegram().
       - Safely handles Telegram's 1024-character caption limit by sending main summary on photo
         and full breakdown in a follow-up message if needed.
+      - Supports reply_to_message_id to quote the requesting user's message in groups.
     """
     target_chat = chat_id or TELEGRAM_CHAT_ID
     if not (TELEGRAM_TOKEN and target_chat):
@@ -592,7 +609,7 @@ def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, cha
         return False
 
     if not photo_url:
-        return send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode)
+        return send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
 
@@ -614,6 +631,9 @@ def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, cha
     }
     if parse_mode:
         payload["parse_mode"] = parse_mode
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
+        payload["allow_sending_without_reply"] = True
 
     for attempt in range(3):
         try:
@@ -627,9 +647,9 @@ def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, cha
                 continue
             if resp.status_code == 200:
                 if followup_text:
-                    sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode)
+                    sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
                     if not sent_f and parse_mode:
-                        send_telegram(followup_text, chat_id=target_chat)
+                        send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id)
                 return True
             elif resp.status_code == 400 and parse_mode:
                 log.info("sendPhoto 400 with parse_mode=%s; retrying photo with plain text caption...", parse_mode)
@@ -639,9 +659,9 @@ def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, cha
                     retry_resp = requests.post(url, json=plain_payload, timeout=REQUEST_TIMEOUT)
                     if retry_resp.status_code == 200:
                         if followup_text:
-                            sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode)
+                            sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
                             if not sent_f and parse_mode:
-                                send_telegram(followup_text, chat_id=target_chat)
+                                send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id)
                         return True
                 except Exception as exc:
                     log.warning("Retry sendPhoto without parse_mode failed: %s", scrub(exc))
@@ -653,9 +673,9 @@ def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, cha
 
     # Fallback mechanism: send standard text alert so alerts are NEVER missed
     log.info("sendPhoto failed; falling back to standard text alert.")
-    sent = send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode)
+    sent = send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
     if not sent and parse_mode:
-        sent = send_telegram(caption, chat_id=target_chat)
+        sent = send_telegram(caption, chat_id=target_chat, reply_to_message_id=reply_to_message_id)
     return sent
 
 
@@ -2391,29 +2411,53 @@ def ask_groq_trading_question(question: str, live_context: str = "") -> str:
     return "⚠️ Groq AI se connect karne me problem aayi. Please ek baar phir try karein."
 
 
-def handle_telegram_trading_question(client: BinanceClient, chat_id: str, question: str) -> None:
-    """Handles an interactive trading question from Telegram and replies using Groq AI."""
+def handle_telegram_trading_question(
+    client: BinanceClient,
+    chat_id: str,
+    question: str,
+    reply_to_message_id: Optional[int] = None,
+    replied_text: Optional[str] = None,
+) -> None:
+    """Handles an interactive trading question from Telegram and replies directly to user using Groq AI."""
     clean_q = question.strip()
-    # Strip common command prefixes
-    for prefix in ("/ask", "ask", "/ai", "ai", "/q", "q"):
-        if clean_q.lower().startswith(prefix + " ") or clean_q.lower().startswith(prefix + ":"):
-            clean_q = clean_q[len(prefix):].strip(": ")
+    bot_info = get_bot_info()
+    bot_user = (bot_info.get("username") or "").lower()
+
+    # Strip prefixes like @ai, #ai, /ai, ai, /ask, ask, @botusername
+    patterns_to_strip = ["/ask", "ask", "/ai", "ai", "@ai", "#ai", "/q", "q"]
+    if bot_user:
+        patterns_to_strip.extend([f"@{bot_user}", f"/ask@{bot_user}", f"/ai@{bot_user}"])
+
+    for prefix in patterns_to_strip:
+        p_len = len(prefix)
+        if clean_q.lower().startswith(prefix + " ") or clean_q.lower().startswith(prefix + ":") or clean_q.lower().startswith(prefix + ","):
+            clean_q = clean_q[p_len:].strip(": ,")
             break
+
+    clean_q = re.sub(r'^(?:@ai|#ai|ai)\b[:,\s]*', '', clean_q, flags=re.IGNORECASE).strip()
+    if bot_user:
+        clean_q = re.sub(rf'^@{re.escape(bot_user)}\b[:,\s]*', '', clean_q, flags=re.IGNORECASE).strip()
 
     if not clean_q or len(clean_q) < 3:
         send_telegram(
             "❓ *Aapka sawal bahut chota hai.* Kripya apna trading sawal detail me puchein.\n\n"
             "*Examples:*\n"
-            "• `BTC me long entry kaha le sakte hain?`\n"
-            "• `Order Block aur FVG me kya difference hai?`\n"
-            "• `Risk-to-reward ratio kaise calculate karein?`\n"
+            "• `ai BTC me long entry kaha le sakte hain?`\n"
+            "• `@ai Order Block aur FVG me kya difference hai?`\n"
+            "• `@ai Risk-to-reward ratio kaise calculate karein?`\n"
             "• `/ask ETH ka current trend aur key levels kya hain?`",
             chat_id=chat_id,
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_to_message_id=reply_to_message_id,
         )
         return
 
-    send_telegram(f"🧠 *Groq AI Analyst ({GROQ_MODEL}) aapke trading question ka analysis kar raha hai...*", chat_id=chat_id, parse_mode="Markdown")
+    send_telegram(
+        f"🧠 *Groq AI Analyst ({GROQ_MODEL}) aapke trading question ka analysis kar raha hai...*",
+        chat_id=chat_id,
+        parse_mode="Markdown",
+        reply_to_message_id=reply_to_message_id,
+    )
 
     # Detect if any monitored symbol is mentioned to provide live quantitative context
     live_context = ""
@@ -2443,6 +2487,9 @@ def handle_telegram_trading_question(client: BinanceClient, chat_id: str, questi
         except Exception as exc:
             log.warning("Could not fetch live context for %s: %s", detected_sym, exc)
 
+    if replied_text:
+        live_context += f"\nContext from user's quoted/replied message:\n\"{replied_text[:400]}\"\n"
+
     ai_reply = ask_groq_trading_question(clean_q, live_context=live_context)
     full_msg = f"💡 *Groq AI Institutional Trading Answer:*\n━━━━━━━━━━━━━━━━━━━━\n{ai_reply}"
 
@@ -2450,9 +2497,9 @@ def handle_telegram_trading_question(client: BinanceClient, chat_id: str, questi
     if len(full_msg) > 4000:
         chunks = [full_msg[i:i+3800] for i in range(0, len(full_msg), 3800)]
         for chunk in chunks:
-            send_telegram(chunk, chat_id=chat_id, parse_mode="Markdown")
+            send_telegram(chunk, chat_id=chat_id, parse_mode="Markdown", reply_to_message_id=reply_to_message_id)
     else:
-        send_telegram(full_msg, chat_id=chat_id, parse_mode="Markdown")
+        send_telegram(full_msg, chat_id=chat_id, parse_mode="Markdown", reply_to_message_id=reply_to_message_id)
 
 
 def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict) -> None:
@@ -2778,12 +2825,21 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     cmd in ("/help", "help")
                 )
 
-                is_ask_cmd = (
-                    cmd in ("/ask", "ask", "/ai", "ai", "/q", "q")
+                words_clean = [w.strip(",.!?#/@\"'").lower() for w in clean_lower.split()]
+                is_ai_tagged = (
+                    "@ai" in clean_lower
+                    or "#ai" in clean_lower
+                    or clean_lower.startswith("ai ")
+                    or clean_lower.startswith("ai,")
+                    or clean_lower.startswith("ai:")
+                    or clean_lower.startswith("/ai")
+                    or clean_lower.startswith("@ai")
+                    or ("ai" in words_clean[:3])
+                    or is_bot_tagged
+                    or is_reply_to_bot
+                    or cmd in ("/ask", "ask", "/ai", "ai", "/q", "q")
                     or clean_lower.startswith("/ask ")
                     or clean_lower.startswith("ask ")
-                    or clean_lower.startswith("/ai ")
-                    or clean_lower.startswith("ai ")
                 )
 
                 if is_chart_cmd:
@@ -2894,11 +2950,18 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         f"Current State: {status_str}"
                     )
                     send_telegram(help_msg, chat_id=chat_id, parse_mode="Markdown")
-                elif is_ask_cmd or is_bot_tagged or is_reply_to_bot or chat_type == "private":
-                    # User asked a trading question or tagged the bot!
-                    # Process with Groq AI Institutional Analyst!
-                    log.info("Trading question / custom query received from %s: '%s'", chat_id, text)
-                    handle_telegram_trading_question(client, chat_id, text)
+                elif is_ai_tagged or chat_type == "private":
+                    # User asked a trading question or tagged AI / bot!
+                    # Process with Groq AI Institutional Analyst and reply directly to user's message!
+                    replied_txt = reply_to_msg.get("text") if reply_to_msg else None
+                    log.info("AI tagged / trading query from %s (%s): '%s'", chat_id, chat_type, text)
+                    handle_telegram_trading_question(
+                        client,
+                        chat_id,
+                        text,
+                        reply_to_message_id=message_id,
+                        replied_text=replied_txt,
+                    )
                 else:
                     # In groups, ignore casual messages between members so bot does not spam
                     pass

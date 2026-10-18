@@ -142,7 +142,7 @@ Aap apne Telegram chat se bot ko direct control aur query kar sakte hain. Bot sl
 |---|---|---|
 | `/charts` ya `chart image` | `chart dikhao`, `all charts` | Sabhi monitored pairs ke live candlestick charts with **PD-OHLC** levels & Groq AI suggestions send karta hai. |
 | `chart <symbol>` | `chart btc`, `chart eth`, `chart sol` | Specific crypto pair ka single detailed chart image generate karke bhejta hai. |
-| `/ask <question>` | `BTC buy karein ya wait?`, `What is OB?` | **Groq AI (Qwen 27B)** quantitative analyst se instant technical trading answer leta hai. |
+| `@ai <question>` / `/ask` | `@ai BTC buy karein ya wait?`, `ai OB kya hai?` | User ke message ko direct **Reply** karke **Groq AI (Qwen 27B)** se institutional analysis deta hai. Kisi message ko reply karke `@ai` likhne par us message ka context bhi analyze karta hai. |
 | `what are doing` | `kya kar rahe ho`, `report` | Detailed bot activity report, monitored levels, open market bias, aur real-time state deta hai. |
 | `/scan` ya `scan` | `scan now`, `check market` | Instant on-demand sweep & Order Block scan run karta hai. |
 | `/status` | `bot status`, `status` | Active pairs, timeframes, scan cycle interval, chat type aur Google Sheet link dikhata hai. |
