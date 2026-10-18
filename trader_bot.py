@@ -659,6 +659,187 @@ def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, cha
     return sent
 
 
+# =============================================================================
+# TELEGRAM GROUP MANAGEMENT, ANTI-SPAM & MODERATION
+# =============================================================================
+BOT_INFO_CACHE: Dict[str, Any] = {}
+
+
+def get_bot_info() -> Dict[str, Any]:
+    """Fetches and caches the bot's user info (ID, username, first_name)."""
+    global BOT_INFO_CACHE
+    if BOT_INFO_CACHE:
+        return BOT_INFO_CACHE
+    if not TELEGRAM_TOKEN:
+        return {}
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=10)
+        if r.status_code == 200 and r.json().get("ok"):
+            BOT_INFO_CACHE = r.json()["result"]
+            return BOT_INFO_CACHE
+    except Exception as exc:
+        log.warning("getMe failed: %s", scrub(exc))
+    return {}
+
+
+def telegram_delete_message(chat_id: str, message_id: int) -> bool:
+    """Deletes a message from a chat (requires manage messages / delete permission)."""
+    if not (TELEGRAM_TOKEN and chat_id and message_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
+        resp = requests.post(url, json={"chat_id": chat_id, "message_id": message_id}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("deleteMessage error: %s", scrub(exc))
+        return False
+
+
+def telegram_ban_member(chat_id: str, user_id: int) -> bool:
+    """Bans a user from the group (requires ban users permission)."""
+    if not (TELEGRAM_TOKEN and chat_id and user_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember"
+        resp = requests.post(url, json={"chat_id": chat_id, "user_id": user_id}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("banChatMember error: %s", scrub(exc))
+        return False
+
+
+def telegram_unban_member(chat_id: str, user_id: int) -> bool:
+    """Unbans a user from the group."""
+    if not (TELEGRAM_TOKEN and chat_id and user_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember"
+        resp = requests.post(url, json={"chat_id": chat_id, "user_id": user_id, "only_if_banned": True}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("unbanChatMember error: %s", scrub(exc))
+        return False
+
+
+def telegram_mute_member(chat_id: str, user_id: int, duration_sec: int = 3600) -> bool:
+    """Restricts a user from sending messages for duration_sec seconds."""
+    if not (TELEGRAM_TOKEN and chat_id and user_id):
+        return False
+    try:
+        until_date = int(time.time()) + max(60, duration_sec)
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/restrictChatMember"
+        payload = {
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "permissions": {
+                "can_send_messages": False,
+                "can_send_media_messages": False,
+                "can_send_other_messages": False,
+                "can_add_web_page_previews": False,
+            },
+            "until_date": until_date,
+        }
+        resp = requests.post(url, json=payload, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("restrictChatMember error: %s", scrub(exc))
+        return False
+
+
+def telegram_pin_message(chat_id: str, message_id: int, notify: bool = False) -> bool:
+    """Pins a message in the chat."""
+    if not (TELEGRAM_TOKEN and chat_id and message_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage"
+        resp = requests.post(url, json={"chat_id": chat_id, "message_id": message_id, "disable_notification": not notify}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("pinChatMessage error: %s", scrub(exc))
+        return False
+
+
+def telegram_unpin_message(chat_id: str, message_id: Optional[int] = None) -> bool:
+    """Unpins a message in the chat."""
+    if not (TELEGRAM_TOKEN and chat_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unpinChatMessage"
+        payload: Dict[str, Any] = {"chat_id": chat_id}
+        if message_id:
+            payload["message_id"] = message_id
+        resp = requests.post(url, json=payload, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("unpinChatMessage error: %s", scrub(exc))
+        return False
+
+
+def telegram_set_title(chat_id: str, title: str) -> bool:
+    """Sets group/channel title (requires change channel info permission)."""
+    if not (TELEGRAM_TOKEN and chat_id and title):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setChatTitle"
+        resp = requests.post(url, json={"chat_id": chat_id, "title": title[:128]}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("setChatTitle error: %s", scrub(exc))
+        return False
+
+
+def telegram_set_description(chat_id: str, description: str) -> bool:
+    """Sets group/channel description (requires change channel info permission)."""
+    if not (TELEGRAM_TOKEN and chat_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setChatDescription"
+        resp = requests.post(url, json={"chat_id": chat_id, "description": description[:255]}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("setChatDescription error: %s", scrub(exc))
+        return False
+
+
+def is_telegram_admin(chat_id: str, user_id: Optional[int]) -> bool:
+    """Verifies whether a user is a group administrator or creator, or the configured bot owner."""
+    if not user_id:
+        return False
+    if TELEGRAM_CHAT_ID and str(user_id) == str(TELEGRAM_CHAT_ID):
+        return True
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMember"
+        resp = requests.get(url, params={"chat_id": chat_id, "user_id": user_id}, timeout=10)
+        if resp.status_code == 200 and resp.json().get("ok"):
+            status = resp.json()["result"].get("status")
+            return status in ("creator", "administrator")
+    except Exception as exc:
+        log.warning("is_telegram_admin check failed: %s", scrub(exc))
+    return False
+
+
+def is_spam_message(text: str) -> bool:
+    """Detects unsolicited promotion, spam invite links, and scam phrases."""
+    t_lower = text.lower()
+    spam_patterns = [
+        "t.me/+",
+        "t.me/joinchat",
+        "whatsapp.com",
+        "wa.me/",
+        "free crypto signals",
+        "guaranteed profit",
+        "100x pump",
+        "inbox me for investment",
+        "dm me to earn",
+        "earn 1000$ daily",
+        "investment plan",
+        "doubled in 24 hours",
+        "giveaway crypto",
+        "whatsapp me",
+    ]
+    return any(p in t_lower for p in spam_patterns)
+
+
 DAILY_LEVELS_CACHE: Dict[str, Tuple[float, float, float, float, float]] = {}  # sym -> (timestamp, pdo, pdh, pdl, pdc)
 
 
@@ -2307,14 +2488,223 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     continue
                 chat = msg.get("chat", {})
                 chat_id = str(chat.get("id"))
+                chat_type = chat.get("type", "private")  # "private", "group", "supergroup", "channel"
+                chat_title = chat.get("title") or "Trading Community"
+                user = msg.get("from", {})
+                user_id = user.get("id")
+                user_name = user.get("first_name") or user.get("username") or "Trader"
+                message_id = msg.get("message_id")
+
+                # --- 1. WELCOME NEW MEMBERS ---
+                new_members = msg.get("new_chat_members")
+                if new_members:
+                    bot_info = get_bot_info()
+                    bot_id = bot_info.get("id")
+                    for m in new_members:
+                        if m.get("id") == bot_id:
+                            # The bot itself was added to the group
+                            send_telegram(
+                                f"👋 *Namaste {chat_title}!*\n\n"
+                                f"🤖 *Crypto Liquidity Sweep & SMC AI Trading Bot* active ho gaya hai.\n\n"
+                                f"• 📊 *Real-time Signals:* Institutional 24/7 Liquidity Sweep + Order Block alerts.\n"
+                                f"• 🧠 *Groq AI Analysis:* Market Structure & Trade Grading (Qwen 27B).\n"
+                                f"• 📈 *Visual Charts:* Candlestick charts with PD-OHLC (Daily High/Low) levels.\n"
+                                f"• 🛡️ *Group Security:* Active Auto-Moderation & Anti-Spam protection.\n\n"
+                                f"👉 Type `/help` ya `/charts` to begin!",
+                                chat_id=chat_id,
+                                parse_mode="Markdown",
+                            )
+                        else:
+                            # A new member joined the group
+                            m_name = m.get("first_name") or m.get("username") or "Trader"
+                            welcome_msg = (
+                                f"👋 *Welcome to {chat_title}, {m_name}!*\n\n"
+                                f"📈 *Yahan aapko live institutional crypto market alerts aur AI analysis milega.*\n\n"
+                                f"💡 *Quick Start Commands:*\n"
+                                f"• `/charts` - Sabhi coins ke live charts + PDH/PDL levels\n"
+                                f"• `/scan` - Instant sweep aur Order Block scan\n"
+                                f"• `/ask <question>` - Groq AI se koi bhi trading question puchein\n"
+                                f"• `/rules` - Group guidelines & risk management rules\n\n"
+                                f"⚠️ *Note:* Spamming, unauthorized links, ya direct promotions strictly prohibited hain."
+                            )
+                            send_telegram(welcome_msg, chat_id=chat_id, parse_mode="Markdown")
+                    continue
+
                 text = (msg.get("text") or "").strip()
                 if not text:
                     continue
 
-                log.info("Telegram command received from %s: '%s'", chat_id, text)
-                clean_lower = text.lower().strip()
-                cmd = clean_lower.split()[0] if clean_lower else ""
+                # --- 2. ANTI-SPAM & AUTO-MODERATION (GROUPS) ---
+                if chat_type in ("group", "supergroup"):
+                    if is_spam_message(text):
+                        if not is_telegram_admin(chat_id, user_id):
+                            telegram_delete_message(chat_id, message_id)
+                            user_tag = f"@{user.get('username')}" if user.get("username") else user_name
+                            warn_msg = (
+                                f"⚠️ *Warning:* {user_tag}, promotional links aur spamming group me strictly prohibited hai!\n"
+                                f"_Aapka message Auto-Moderator ne delete kar diya hai._"
+                            )
+                            send_telegram(warn_msg, chat_id=chat_id, parse_mode="Markdown")
+                            continue
 
+                # Normalize text & command
+                bot_info = get_bot_info()
+                bot_username = (bot_info.get("username") or "").lower()
+                clean_lower = text.lower().strip()
+                first_word = clean_lower.split()[0] if clean_lower else ""
+                # Strip @botusername from command e.g. /scan@my_bot -> /scan
+                cmd = first_word.split("@")[0] if "@" in first_word else first_word
+
+                # Check if bot was explicitly tagged or message is reply to bot
+                is_bot_tagged = bool(bot_username and f"@{bot_username}" in clean_lower)
+                reply_to_msg = msg.get("reply_to_message")
+                is_reply_to_bot = bool(reply_to_msg and reply_to_msg.get("from", {}).get("id") == bot_info.get("id"))
+
+                # --- 3. GROUP MODERATION & ADMIN COMMANDS ---
+                if cmd in ("/del", "del", "/delete", "delete"):
+                    if is_telegram_admin(chat_id, user_id):
+                        if reply_to_msg:
+                            telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
+                            telegram_delete_message(chat_id, message_id)
+                        else:
+                            send_telegram("ℹ️ Kisi message ko delete karne ke liye us message ko reply karke `/del` likhein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/del` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/ban", "ban"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_user = reply_to_msg.get("from", {}) if reply_to_msg else None
+                        target_id = target_user.get("id") if target_user else None
+                        if target_id:
+                            if telegram_ban_member(chat_id, target_id):
+                                t_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                                send_telegram(f"🚫 *User {t_name} ko group se ban kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                                if reply_to_msg:
+                                    telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
+                            else:
+                                send_telegram("❌ User ko ban karne me error aayi. Please bot permissions verify karein.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Kisi user ko ban karne ke liye uske message ko reply karke `/ban` send karein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/ban` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/unban", "unban"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_user = reply_to_msg.get("from", {}) if reply_to_msg else None
+                        target_id = target_user.get("id") if target_user else None
+                        if target_id:
+                            if telegram_unban_member(chat_id, target_id):
+                                t_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                                send_telegram(f"✅ *User {t_name} unban ho gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ User ko unban karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Unban karne ke liye user ke message ko reply karke `/unban` send karein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/unban` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/mute", "mute", "/restrict", "restrict"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_user = reply_to_msg.get("from", {}) if reply_to_msg else None
+                        target_id = target_user.get("id") if target_user else None
+                        if target_id:
+                            if telegram_mute_member(chat_id, target_id, duration_sec=3600):
+                                t_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                                send_telegram(f"🔇 *User {t_name} ko 1 hour ke liye mute kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ User ko mute karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Mute karne ke liye user ke message ko reply karke `/mute` send karein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/mute` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/pin", "pin"):
+                    if is_telegram_admin(chat_id, user_id):
+                        if reply_to_msg:
+                            if telegram_pin_message(chat_id, reply_to_msg.get("message_id")):
+                                send_telegram("📌 *Message successfully pin kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ Pin karne me error aayi. Please bot permissions check karein.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Kisi message ko pin karne ke liye us message ko reply karke `/pin` likhein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/pin` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/unpin", "unpin"):
+                    if is_telegram_admin(chat_id, user_id):
+                        r_mid = reply_to_msg.get("message_id") if reply_to_msg else None
+                        telegram_unpin_message(chat_id, r_mid)
+                        send_telegram("📌 *Message unpin kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/unpin` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/settitle", "settitle"):
+                    if is_telegram_admin(chat_id, user_id):
+                        new_t = text[len(first_word):].strip()
+                        if new_t:
+                            if telegram_set_title(chat_id, new_t):
+                                send_telegram(f"✅ *Group title updated to:* `{new_t}`", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ Title change karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: `/settitle <Naya Title>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi title change kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/setdesc", "setdesc", "/setdescription", "setdescription"):
+                    if is_telegram_admin(chat_id, user_id):
+                        new_d = text[len(first_word):].strip()
+                        if new_d:
+                            if telegram_set_description(chat_id, new_d):
+                                send_telegram("✅ *Group description successfully updated!*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ Description change karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: `/setdesc <Naya Description>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi description change kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/announce", "announce", "/broadcast", "broadcast"):
+                    if is_telegram_admin(chat_id, user_id):
+                        ann_text = text[len(first_word):].strip()
+                        if ann_text:
+                            ann_msg = (
+                                f"📢 *OFFICIAL ANNOUNCEMENT*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{ann_text}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"👤 _Posted by Administrator_"
+                            )
+                            send_telegram(ann_msg, chat_id=chat_id, parse_mode="Markdown")
+                        else:
+                            send_telegram("ℹ️ Usage: `/announce <Aapka message>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators announcement bhej sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/rules", "rules"):
+                    rules_msg = (
+                        f"📜 *{chat_title} - Group Rules & Guidelines:*\n\n"
+                        f"1. 🚫 *No Spam & Promotion:* Unsolicited telegram/external invite links ya promotional spam strictly prohibited hai.\n"
+                        f"2. 📈 *Trading Discipline:* Har trade par proper Stop Loss (SL) aur risk management (1-2% capital risk) follow karein.\n"
+                        f"3. 🤝 *Respect Community:* Respectful aur informative discussion rakhein.\n"
+                        f"4. 🤖 *AI Trading Mentor:* Groq AI se koi bhi question puchne ke liye `/ask <question>` use karein.\n"
+                        f"5. ⚠️ *Disclaimer:* Yahan provide kiye gaye signals educational purpose ke liye hain. Always DYOR!"
+                    )
+                    send_telegram(rules_msg, chat_id=chat_id, parse_mode="Markdown")
+                    continue
+
+                log.info("Telegram command received from %s (%s): '%s'", chat_id, chat_type, text)
+
+                # --- 4. TRADING BOT SCANNER & CHART COMMANDS ---
                 is_chart_cmd = (
                     cmd in ("/chart", "chart", "/charts", "charts", "/image", "image", "/images", "images", "/photo", "photo")
                     or "chart image" in clean_lower
@@ -2388,13 +2778,25 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     cmd in ("/help", "help")
                 )
 
+                is_ask_cmd = (
+                    cmd in ("/ask", "ask", "/ai", "ai", "/q", "q")
+                    or clean_lower.startswith("/ask ")
+                    or clean_lower.startswith("ask ")
+                    or clean_lower.startswith("/ai ")
+                    or clean_lower.startswith("ai ")
+                )
+
                 if is_chart_cmd:
                     log.info("Chart images requested by %s ('%s'), requested_sym=%s", chat_id, text, requested_chart_sym)
                     handle_telegram_charts(client, chat_id, requested_sym=requested_chart_sym)
                 elif is_activity_cmd:
-                    log.info("Activity / 'What are you doing' report requested by %s ('%s')", chat_id, text)
+                    log.info("Activity report requested by %s ('%s')", chat_id, text)
                     handle_telegram_start(client, sheets, state, chat_id, is_activity_report=True)
                 elif is_stop_cmd:
+                    # In groups, only admins can pause analysis
+                    if chat_type in ("group", "supergroup") and not is_telegram_admin(chat_id, user_id):
+                        send_telegram("❌ *Sirf group administrators ya bot owner hi analysis pause kar sakte hain.*", chat_id=chat_id, parse_mode="Markdown")
+                        continue
                     if SCANNING_ACTIVE.is_set():
                         SCANNING_ACTIVE.clear()
                         log.info("Analysis PAUSED via Telegram command by %s ('%s')", chat_id, text)
@@ -2415,6 +2817,10 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                             parse_mode="Markdown",
                         )
                 elif is_start_cmd:
+                    # In groups, only admins can resume analysis
+                    if chat_type in ("group", "supergroup") and not is_telegram_admin(chat_id, user_id):
+                        send_telegram("❌ *Sirf group administrators ya bot owner hi analysis start/resume kar sakte hain.*", chat_id=chat_id, parse_mode="Markdown")
+                        continue
                     was_paused = not SCANNING_ACTIVE.is_set()
                     if was_paused:
                         SCANNING_ACTIVE.set()
@@ -2438,18 +2844,23 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         f"• *Timeframes:* {', '.join(TIMEFRAMES)}\n"
                         f"• *Scan Cycle:* {SCAN_INTERVAL}s\n"
                         f"• *Groq AI Model:* `{GROQ_MODEL}`\n"
+                        f"• *Chat Type:* `{chat_type}` ({chat_title})\n"
                         f"{sheet_line}\n"
                         "💡 *Commands:*\n"
                         "• `chart image` ya `/charts` - Sabhi charts + PD-OHLC levels\n"
                         "• `chart <coin>` (e.g. `chart btc`) - Single chart image\n"
                         "• `what are doing` ya `kya kar rahe ho` - Analysis report\n"
-                        "• `Ask any trading question` - Groq AI se direct institutional jawab payein\n"
-                        "• `end` ya `/end` - Analysis band karein\n"
-                        "• `start` ya `/start` - Analysis shuru karein\n"
+                        "• `/ask <question>` - Groq AI se direct institutional jawab payein\n"
+                        "• `/rules` - Group guidelines\n"
+                        "• `end` ya `/end` - Analysis band karein (Admin)\n"
+                        "• `start` ya `/start` - Analysis shuru karein (Admin)\n"
                         "• `/status` - Bot status dekhein"
                     )
                     send_telegram(status_msg, chat_id=chat_id, parse_mode="Markdown")
                 elif is_exit_cmd:
+                    if chat_type in ("group", "supergroup") and not is_telegram_admin(chat_id, user_id):
+                        send_telegram("❌ *Sirf group administrators ya bot owner hi bot shutdown kar sakte hain.*", chat_id=chat_id, parse_mode="Markdown")
+                        continue
                     send_telegram("🛑 *Bot process ko completely stop (shutdown) kiya ja raha hai...*", chat_id=chat_id, parse_mode="Markdown")
                     log.info("Complete shutdown triggered via Telegram command by %s", chat_id)
                     SCANNING_ACTIVE.clear()
@@ -2459,25 +2870,38 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     sheet_url = get_sheet_link()
                     sheet_line = f"• 📊 [Open Live Google Sheet]({sheet_url})\n" if sheet_url else ""
                     help_msg = (
-                        "🤖 *Crypto Trading Bot Commands:*\n\n"
-                        "• `chart image` ya `/charts` - *Har symbol ka chart image + PDH, PDL, PDO, PDC*\n"
+                        f"🤖 *Crypto Trading & Group Bot Commands ({chat_title}):*\n\n"
+                        "📈 *Market & Trading Commands:*\n"
+                        "• `chart image` ya `/charts` - *Har symbol ka chart + PDH, PDL, PDO, PDC*\n"
                         "• `chart <coin>` (e.g. `chart btc`, `chart eth`) - *Single coin chart image*\n"
                         "• `what are doing` ya `kya kar rahe ho` - *Bot Activity & Analysis Report*\n"
-                        "• `Ask any trading question` (e.g. `BTC buy karein ya wait?`, `Order block kya hota hai?`, `/ask <question>`) - *Groq AI Institutional Answer*\n"
-                        "• `end` ya `/end` - *Analysis band karein* (Pause 24/7 scan & AI alerts)\n"
-                        "• `start` ya `/start` - *Analysis shuru karein* (Resume scan & get live data)\n"
-                        "• `/scan` ya `scan` - Instant sweep & OB scan\n"
-                        "• `/status` - Current bot state\n"
-                        "• `/exit` - Bot process completely shutdown karein\n"
+                        "• `/ask <question>` (e.g. `/ask BTC key levels?`) - *Groq AI Institutional Answer*\n"
+                        "• `/scan` ya `scan` - *Instant sweep & OB scan*\n"
+                        "• `/status` - *Current bot & scanner state*\n"
+                        "• `/rules` - *Group rules & trading risk policy*\n\n"
+                        "🛡️ *Admin & Moderation Commands:*\n"
+                        "• `/del` (Reply to message) - *Message delete karein*\n"
+                        "• `/ban` (Reply to user) - *User ko group se ban karein*\n"
+                        "• `/unban` (Reply to user) - *User ko unban karein*\n"
+                        "• `/mute` (Reply to user) - *User ko 1 hr ke liye mute karein*\n"
+                        "• `/pin` (Reply to message) - *Message pin karein*\n"
+                        "• `/unpin` - *Message unpin karein*\n"
+                        "• `/settitle <title>` - *Group ka title update karein*\n"
+                        "• `/setdesc <description>` - *Group ka description update karein*\n"
+                        "• `/announce <text>` - *Official announcement post karein*\n"
+                        "• `/end` / `/start` - *Pause / Resume 24/7 scanner (Admin)*\n"
                         f"{sheet_line}\n"
                         f"Current State: {status_str}"
                     )
                     send_telegram(help_msg, chat_id=chat_id, parse_mode="Markdown")
-                else:
-                    # User asked a trading question or custom query!
+                elif is_ask_cmd or is_bot_tagged or is_reply_to_bot or chat_type == "private":
+                    # User asked a trading question or tagged the bot!
                     # Process with Groq AI Institutional Analyst!
                     log.info("Trading question / custom query received from %s: '%s'", chat_id, text)
                     handle_telegram_trading_question(client, chat_id, text)
+                else:
+                    # In groups, ignore casual messages between members so bot does not spam
+                    pass
         except Exception as exc:
             log.warning("Telegram listener error: %s", scrub(exc))
             STOP.wait(3)

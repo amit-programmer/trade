@@ -137,17 +137,35 @@ trade/
 
 Aap apne Telegram chat se bot ko direct control aur query kar sakte hain. Bot slash commands aur natural language dono samajhta hai:
 
+### 📈 Market & Trading Commands:
 | Command / Message | Hindi / English Query | Description |
 |---|---|---|
 | `/charts` ya `chart image` | `chart dikhao`, `all charts` | Sabhi monitored pairs ke live candlestick charts with **PD-OHLC** levels & Groq AI suggestions send karta hai. |
 | `chart <symbol>` | `chart btc`, `chart eth`, `chart sol` | Specific crypto pair ka single detailed chart image generate karke bhejta hai. |
+| `/ask <question>` | `BTC buy karein ya wait?`, `What is OB?` | **Groq AI (Qwen 27B)** quantitative analyst se instant technical trading answer leta hai. |
 | `what are doing` | `kya kar rahe ho`, `report` | Detailed bot activity report, monitored levels, open market bias, aur real-time state deta hai. |
-| `end` ya `/end` | `analysis band karo`, `pause` | 24/7 background scanning aur alerts ko pause (band) kar deta hai. |
-| `start` ya `/start` | `analysis shuru karo`, `resume` | Scanning wapas resume karta hai aur live market data fetch karta hai. |
 | `/scan` ya `scan` | `scan now`, `check market` | Instant on-demand sweep & Order Block scan run karta hai. |
-| `/status` | `bot status`, `status` | Active pairs, timeframes, scan cycle interval aur Google Sheet link dikhata hai. |
-| `/exit` ya `shutdown` | `kill`, `exit` | Bot process ko completely and safely stop karta hai. |
+| `/status` | `bot status`, `status` | Active pairs, timeframes, scan cycle interval, chat type aur Google Sheet link dikhata hai. |
+| `/rules` | `group rules`, `rules` | Group ke trading guidelines, risk management rules aur disclaimer display karta hai. |
 | `/help` | `help`, `commands` | Available commands ki list show karta hai. |
+
+### 🛡️ Group Moderation & Admin Commands:
+| Command | Usage | Description |
+|---|---|---|
+| Auto Welcome | *Automatic* | Naye members ke join hote hi unka warm institutional welcome karta hai with group rules & commands. |
+| Anti-Spam Filter | *Automatic* | Unsolicited promotion, scam invite links (`t.me/+`, WhatsApp links) ko automatically delete karke warning deta hai. |
+| `/del` | Reply to message | Target message aur command message dono ko delete kar deta hai. |
+| `/ban` | Reply to user message | Spammer ya rule breaker user ko group se permanently ban kar deta hai. |
+| `/unban` | Reply to user message | Pehle se banned user ko unban karta hai. |
+| `/mute` | Reply to user message | User ko 1 ghante ke liye mute/restrict kar deta hai (messages/media blocked). |
+| `/pin` | Reply to message | Kisi zaroori signal ya message ko group ke header me pin kar deta hai. |
+| `/unpin` | Reply to message | Pinned message ko unpin kar deta hai. |
+| `/settitle <title>` | `/settitle Crypto Signals` | Group ka title remotely update karta hai. |
+| `/setdesc <description>` | `/setdesc SMC Community` | Group ka description remotely update karta hai. |
+| `/announce <message>` | `/announce BTC breakout!` | Official formatted announcement post karta hai. |
+| `/end` | `/end` (Admin only) | 24/7 background scanning aur alerts ko pause (band) kar deta hai. |
+| `/start` | `/start` (Admin only) | Scanning wapas resume karta hai aur live market data fetch karta hai. |
+| `/exit` | `/exit` (Admin only) | Bot process ko safely stop/shutdown karta hai. |
 
 ---
 
