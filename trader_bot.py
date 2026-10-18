@@ -22,6 +22,7 @@ guarantees profit. Paper-trade / backtest before risking money.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
 import os
@@ -57,6 +58,22 @@ try:
 except ImportError:  # very old Python
     ZoneInfo = None
 
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # Non-interactive backend safe for daemon / background threads
+    import matplotlib.pyplot as plt
+    import mplfinance as mpf
+except ImportError:
+    mpf = None
+    plt = None
+
+try:
+    import cloudinary
+    import cloudinary.uploader
+    import cloudinary.api
+except ImportError:
+    cloudinary = None
+
 
 # =============================================================================
 # CONFIGURATION
@@ -91,22 +108,59 @@ def env_bool(name: str, default: bool) -> bool:
 
 SYMBOLS: List[str] = [
     s.strip().upper()
-    for s in env_str("SYMBOLS", "ETHUSDT,SOLUSDT,XRPUSDT,PAXGUSDT").split(",")
+    for s in env_str("SYMBOLS", "ETHUSDT,SOLUSDT,XRPUSDT,BTCUSDT,DOGEUSDT,PAXGUSDT,XAUTUSDT").split(",")
     if s.strip()
 ]
-TIMEFRAME = env_str("TIMEFRAME", "15m")            # e.g. 5m, 15m, 1h, 4h
-SCAN_INTERVAL = env_int("SCAN_INTERVAL_SECONDS", 300)  # seconds between scans
+VALID_INTERVALS = {
+    "1s", "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "8h", "12h",
+    "1d", "3d", "1w", "1M"
+}
+_raw_env_tf = env_str("TIMEFRAMES") or env_str("TIMEFRAME", "15m, 5m, 1h, 4h, 1m")
+_clean_env_tf = _raw_env_tf.split("#")[0].strip()
+_raw_tfs = [t.strip().lower() for t in _clean_env_tf.split(",") if t.strip()]
+TIMEFRAMES: List[str] = [t for t in _raw_tfs if t in VALID_INTERVALS] or ["15m", "5m", "1h", "4h", "1m"]
+TIMEFRAME = ", ".join(TIMEFRAMES)            # display string of active timeframes
+SCAN_INTERVAL = env_int("SCAN_INTERVAL_SECONDS", 60)  # seconds between scans
 KLINE_LIMIT = env_int("KLINE_LIMIT", 300)
 REQUEST_TIMEOUT = env_int("REQUEST_TIMEOUT", 15)
 
+# --- Telegram Bot ---
 TELEGRAM_TOKEN = env_str("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = env_str("TELEGRAM_CHAT_ID")
 SEND_STARTUP_MESSAGE = env_bool("SEND_STARTUP_MESSAGE", True)
 
+# --- Cloudinary (Chart Image Hosting) ---
+CLOUDINARY_CLOUD_NAME = env_str("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = env_str("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = env_str("CLOUDINARY_API_SECRET")
+
+
+def cloudinary_configured() -> bool:
+    return bool(cloudinary and CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET)
+
+
+if cloudinary_configured():
+    try:
+        cloudinary.config(
+            cloud_name=CLOUDINARY_CLOUD_NAME,
+            api_key=CLOUDINARY_API_KEY,
+            api_secret=CLOUDINARY_API_SECRET,
+            secure=True,
+        )
+    except Exception as _c_exc:
+        logging.getLogger("trader_bot").warning("Cloudinary initialization failed: %s", _c_exc)
+
+# --- Groq AI (qwen/qwen3.8-27b) ---
+GROQ_API_KEY = env_str("GROQ_API_KEY")
+GROQ_MODEL = env_str("GROQ_MODEL", "qwen/qwen3.8-27b")
+
+# --- Google Sheets (Cloud JSON string or local credentials.json fallback) ---
+GOOGLE_CREDENTIALS_JSON = env_str("GOOGLE_CREDENTIALS_JSON")
 GOOGLE_CREDENTIALS_FILE = env_str("GOOGLE_CREDENTIALS_FILE", str(BASE_DIR / "credentials.json"))
 GOOGLE_SHEET_ID = env_str("GOOGLE_SHEET_ID")       # preferred (from the sheet URL)
 GOOGLE_SHEET_NAME = env_str("GOOGLE_SHEET_NAME")   # alternative: open by title
-LOG_EVERY_CYCLE = env_bool("LOG_EVERY_CYCLE", False)
+LOG_EVERY_CYCLE = env_bool("LOG_EVERY_CYCLE", True) # true = append a row every scan cycle
 SHEET_QUEUE_MAX = 2000
 
 STATE_FILE = Path(env_str("STATE_FILE", str(BASE_DIR / "bot_state.json")))
@@ -169,9 +223,16 @@ CFG = StrategyConfig(
 # =============================================================================
 log = logging.getLogger("trader_bot")
 STOP = threading.Event()
+SCANNING_ACTIVE = threading.Event()
+SCANNING_ACTIVE.set()
 
 
 def setup_logging() -> None:
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     log.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)-7s | %(message)s")
     console = logging.StreamHandler(sys.stdout)
@@ -191,10 +252,16 @@ def _handle_signal(signum, _frame) -> None:
 
 
 def scrub(text: Any) -> str:
-    """Remove secrets (Telegram token) from any text before logging it."""
+    """Remove secrets (Telegram token, Groq key, Google credentials, Cloudinary keys) from any text before logging it."""
     s = str(text)
     if TELEGRAM_TOKEN:
-        s = s.replace(TELEGRAM_TOKEN, "<TOKEN>")
+        s = s.replace(TELEGRAM_TOKEN, "<TELEGRAM_TOKEN>")
+    if GROQ_API_KEY:
+        s = s.replace(GROQ_API_KEY, "<GROQ_API_KEY>")
+    if CLOUDINARY_API_KEY:
+        s = s.replace(CLOUDINARY_API_KEY, "<CLOUDINARY_API_KEY>")
+    if CLOUDINARY_API_SECRET:
+        s = s.replace(CLOUDINARY_API_SECRET, "<CLOUDINARY_API_SECRET>")
     return s
 
 
@@ -234,6 +301,13 @@ class BinanceClient:
             base = BINANCE_BASES[self.idx % len(BINANCE_BASES)]
             try:
                 resp = self.session.get(base + path, params=params, timeout=REQUEST_TIMEOUT)
+                if resp.status_code == 400:
+                    err_msg = resp.text
+                    try:
+                        err_msg = resp.json().get("msg", resp.text)
+                    except Exception:
+                        pass
+                    raise BinanceError(f"Bad Request (400) on {path}: {err_msg}")
                 if resp.status_code in (429, 418):  # rate limited / temporarily banned
                     try:
                         wait = min(int(resp.headers.get("Retry-After", 30)), 120)
@@ -261,7 +335,7 @@ class BinanceClient:
 
     def klines(self, symbol: str, interval: str, limit: int) -> pd.DataFrame:
         raw = self._get("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
-        if not isinstance(raw, list) or len(raw) < 20:
+        if not isinstance(raw, list) or not raw:
             raise BinanceError(f"Unexpected klines payload for {symbol}")
         df = pd.DataFrame(
             raw,
@@ -299,6 +373,12 @@ class Setup:
     target: float             # reference only
     retest: str               # "live" or "wick"
     price: float
+    atr: float = 0.0          # 14-period ATR for dynamic risk calculations
+    htf_bias: Optional[str] = None
+    confluence: Optional[str] = None
+    ai_insight: Optional[str] = None
+    ai_data: Optional[Dict[str, Any]] = None  # Full structured JSON from Groq
+    chart_url: Optional[str] = None           # Cloudinary uploaded chart URL
 
     @property
     def key(self) -> str:
@@ -404,9 +484,32 @@ def _detect_long(o, h, l, c, atr, price, cfg: StrategyConfig) -> Optional[dict]:
     return None
 
 
-def detect_setup(df: pd.DataFrame, symbol: str, price: float, cfg: StrategyConfig) -> List[Setup]:
+def compute_trend(df: pd.DataFrame) -> str:
+    """Calculates trend using price vs EMA20 & EMA50 on closed candles."""
+    try:
+        c = df["close"].to_numpy(dtype=float)
+        if len(c) < 30:
+            return "NEUTRAL"
+        s = pd.Series(c)
+        ema20 = s.ewm(span=20, adjust=False).mean().iloc[-1]
+        ema50 = s.ewm(span=50, adjust=False).mean().iloc[-1]
+        last = c[-1]
+        if last > ema50 and ema20 >= ema50:
+            return "BULLISH"
+        elif last < ema50 and ema20 <= ema50:
+            return "BEARISH"
+        elif last > ema50:
+            return "MILD BULLISH"
+        elif last < ema50:
+            return "MILD BEARISH"
+        return "NEUTRAL"
+    except Exception:
+        return "NEUTRAL"
+
+
+def detect_setup(df: pd.DataFrame, symbol: str, price: float, cfg: StrategyConfig, tf: str = "15m") -> List[Setup]:
     if len(df) < cfg.lookback + 2 * cfg.swing_k + 20:
-        raise BinanceError(f"{symbol}: not enough candles ({len(df)})")
+        raise BinanceError(f"{symbol} ({tf}): not enough candles ({len(df)})")
 
     o, h, l, c = (df[x].to_numpy(dtype=float) for x in ("open", "high", "low", "close"))
     prev_c = np.concatenate(([c[0]], c[:-1]))
@@ -419,23 +522,25 @@ def detect_setup(df: pd.DataFrame, symbol: str, price: float, cfg: StrategyConfi
     # LONG
     hit = _detect_long(o, h, l, c, atr, price, cfg)
     if hit:
+        cur_atr = float(atr[hit["d"]]) if hit["d"] < len(atr) else float(atr[-1])
         entry = (hit["ob_lo"] + hit["ob_hi"]) / 2
-        stop = hit["extreme"] - cfg.stop_buffer_atr * atr[hit["d"]]
+        stop = hit["extreme"] - cfg.stop_buffer_atr * cur_atr
         target = entry + cfg.rr * (entry - stop)
-        out.append(Setup(symbol, TIMEFRAME, "LONG", times[hit["s"]], times[hit["d"]],
+        out.append(Setup(symbol, tf, "LONG", times[hit["s"]], times[hit["d"]],
                          hit["level"], hit["extreme"], hit["ob_lo"], hit["ob_hi"],
-                         entry, stop, target, hit["retest"], price))
+                         entry, stop, target, hit["retest"], price, atr=cur_atr))
 
     # SHORT = mirror image (flip signs; highs become lows and vice-versa)
     hit = _detect_long(-o, -l, -h, -c, atr, -price, cfg)
     if hit:
+        cur_atr = float(atr[hit["d"]]) if hit["d"] < len(atr) else float(atr[-1])
         ob_lo, ob_hi = -hit["ob_hi"], -hit["ob_lo"]
         level, extreme = -hit["level"], -hit["extreme"]
         entry = (ob_lo + ob_hi) / 2
-        stop = extreme + cfg.stop_buffer_atr * atr[hit["d"]]
+        stop = extreme + cfg.stop_buffer_atr * cur_atr
         target = entry - cfg.rr * (stop - entry)
-        out.append(Setup(symbol, TIMEFRAME, "SHORT", times[hit["s"]], times[hit["d"]],
-                         level, extreme, ob_lo, ob_hi, entry, stop, target, hit["retest"], price))
+        out.append(Setup(symbol, tf, "SHORT", times[hit["s"]], times[hit["d"]],
+                         level, extreme, ob_lo, ob_hi, entry, stop, target, hit["retest"], price, atr=cur_atr))
     return out
 
 
@@ -446,12 +551,15 @@ def telegram_configured() -> bool:
     return bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
 
-def send_telegram(text: str) -> bool:
-    if not telegram_configured():
-        log.warning("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).")
+def send_telegram(text: str, chat_id: Optional[str] = None, parse_mode: Optional[str] = None) -> bool:
+    target_chat = chat_id or TELEGRAM_CHAT_ID
+    if not (TELEGRAM_TOKEN and target_chat):
+        log.warning("Telegram not configured (missing TELEGRAM_BOT_TOKEN or chat_id).")
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "disable_web_page_preview": True}
+    payload = {"chat_id": target_chat, "text": text, "disable_web_page_preview": True}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     for attempt in range(3):
         try:
             resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
@@ -470,39 +578,744 @@ def send_telegram(text: str) -> bool:
     return False
 
 
-def format_alert(s: Setup, now: datetime) -> str:
-    icon = "🟢" if s.direction == "LONG" else "🔴"
-    retest = "price is inside the OB" if s.retest == "live" else "last closed candle wicked into the OB"
-    return (
-        f"🚨 LIQUIDITY ENTRY ALERT: {s.symbol} | Setup: Liquidity Sweep + OB Retest | "
-        f"Current Price: {fmt_price(s.price)} | Time: {fmt_ts(now)}\n\n"
-        f"{icon} Bias: {s.direction}   |   Timeframe: {s.timeframe}\n"
-        f"Swept liquidity: {fmt_price(s.sweep_level)} (wick to {fmt_price(s.sweep_extreme)})\n"
-        f"Order Block zone: {fmt_price(s.ob_low)} - {fmt_price(s.ob_high)}\n"
-        f"Retest: {retest}\n"
-        f"Reference levels ({CFG.rr:g}R): entry {fmt_price(s.entry)} | "
-        f"SL {fmt_price(s.stop)} | TP {fmt_price(s.target)}\n\n"
-        f"⚠️ Alert only - not financial advice. Confirm on your chart."
+def send_telegram_chart_alert(caption: str, photo_url: Optional[str] = None, chat_id: Optional[str] = None, parse_mode: Optional[str] = "Markdown") -> bool:
+    """
+    Sends a photo alert via Telegram sendPhoto using the Cloudinary image URL.
+    Includes robust fallback:
+      - If photo_url is missing or sendPhoto fails, falls back to text-only send_telegram().
+      - Safely handles Telegram's 1024-character caption limit by sending main summary on photo
+        and full breakdown in a follow-up message if needed.
+    """
+    target_chat = chat_id or TELEGRAM_CHAT_ID
+    if not (TELEGRAM_TOKEN and target_chat):
+        log.warning("Telegram not configured (missing TELEGRAM_BOT_TOKEN or chat_id).")
+        return False
+
+    if not photo_url:
+        return send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+
+    # Telegram sendPhoto caption maximum length is 1024 characters
+    if len(caption) > 1020:
+        cutoff = caption.rfind("\n", 0, 950)
+        if cutoff == -1:
+            cutoff = 950
+        photo_caption = caption[:cutoff] + "\n\n_...Full AI institutional details below 👇_"
+        followup_text = caption[cutoff:].strip()
+    else:
+        photo_caption = caption
+        followup_text = None
+
+    payload: Dict[str, Any] = {
+        "chat_id": target_chat,
+        "photo": photo_url,
+        "caption": photo_caption,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 429:
+                try:
+                    wait = int(resp.json().get("parameters", {}).get("retry_after", 5))
+                except Exception:
+                    wait = 5
+                STOP.wait(min(wait, 60))
+                continue
+            if resp.status_code == 200:
+                if followup_text:
+                    sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode)
+                    if not sent_f and parse_mode:
+                        send_telegram(followup_text, chat_id=target_chat)
+                return True
+            elif resp.status_code == 400 and parse_mode:
+                log.info("sendPhoto 400 with parse_mode=%s; retrying photo with plain text caption...", parse_mode)
+                plain_payload = dict(payload)
+                plain_payload.pop("parse_mode", None)
+                try:
+                    retry_resp = requests.post(url, json=plain_payload, timeout=REQUEST_TIMEOUT)
+                    if retry_resp.status_code == 200:
+                        if followup_text:
+                            sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode)
+                            if not sent_f and parse_mode:
+                                send_telegram(followup_text, chat_id=target_chat)
+                        return True
+                except Exception as exc:
+                    log.warning("Retry sendPhoto without parse_mode failed: %s", scrub(exc))
+            else:
+                log.warning("Telegram sendPhoto returned HTTP %d: %s (attempt %d/3)", resp.status_code, scrub(resp.text), attempt + 1)
+        except requests.RequestException as exc:
+            log.warning("Telegram sendPhoto failed (attempt %d/3): %s", attempt + 1, scrub(exc))
+            STOP.wait(2 ** attempt)
+
+    # Fallback mechanism: send standard text alert so alerts are NEVER missed
+    log.info("sendPhoto failed; falling back to standard text alert.")
+    sent = send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode)
+    if not sent and parse_mode:
+        sent = send_telegram(caption, chat_id=target_chat)
+    return sent
+
+
+DAILY_LEVELS_CACHE: Dict[str, Tuple[float, float, float, float, float]] = {}  # sym -> (timestamp, pdo, pdh, pdl, pdc)
+
+
+def get_daily_levels(client: Optional[BinanceClient], symbol: str) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Fetches and caches Previous Day Candle OHLC (PDO, PDH, PDL, PDC) for 1 hour."""
+    if not client or not symbol:
+        return None, None, None, None
+    now_ts = time.time()
+    cached = DAILY_LEVELS_CACHE.get(symbol)
+    if cached and (now_ts - cached[0] < 3600):
+        return cached[1], cached[2], cached[3], cached[4]
+    try:
+        df_1d = client.klines(symbol, "1d", 3)
+        if df_1d is not None and len(df_1d) >= 1:
+            prev_day = df_1d.iloc[-1]
+            pdo = float(prev_day["open"])
+            pdh = float(prev_day["high"])
+            pdl = float(prev_day["low"])
+            pdc = float(prev_day["close"])
+            DAILY_LEVELS_CACHE[symbol] = (now_ts, pdo, pdh, pdl, pdc)
+            return pdo, pdh, pdl, pdc
+    except Exception as exc:
+        log.warning("Could not fetch daily levels (PDO/PDH/PDL/PDC) for %s: %s", symbol, exc)
+    return None, None, None, None
+
+
+def generate_and_upload_chart(
+    df: pd.DataFrame,
+    setup: Optional[Setup] = None,
+    symbol: Optional[str] = None,
+    timeframe: Optional[str] = None,
+    support: Optional[float] = None,
+    resistance: Optional[float] = None,
+    pdo: Optional[float] = None,
+    pdh: Optional[float] = None,
+    pdl: Optional[float] = None,
+    pdc: Optional[float] = None,
+) -> Optional[str]:
+    """
+    Renders a high-precision, institutional dark-themed candlestick chart using mplfinance & matplotlib.
+    Includes:
+      - 65-candle framing with clear wicks and volume bars
+      - Professional TradingView dark institutional theme (#089981 teal green / #f23645 crisp red)
+      - Dynamic EMA 20 & EMA 50 ribbons
+      - Full Previous 1-Day Candle OHLC levels:
+          * PDH (Previous Day High - Orange)
+          * PDL (Previous Day Low - Blue)
+          * PDO (Previous Day Open - Purple)
+          * PDC (Previous Day Close - Gold)
+      - Shaded ICT Order Block rectangular zone (cyan translucent span with border markers)
+      - Precision price callout tags on right axis (Sweep level, Entry, Dynamic SL, Dynamic TP)
+      - Live Current Price dotted line and badge
+      - Top HUD Header (Asset, Timeframe, Live Price, Strategy, Confluence, PD-OHLC summary)
+      - Saves to high-res 180 DPI PNG buffer and uploads to Cloudinary inside 'crypto_trading_charts'.
+    Returns secure_url or None.
+    """
+    if not mpf:
+        log.warning("mplfinance not installed; skipping chart generation.")
+        return None
+    if not cloudinary_configured():
+        log.info("Cloudinary not configured (CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET); skipping chart upload.")
+        return None
+
+    try:
+        # Take the last 65 candles for clear structural context
+        candles = df.tail(65).copy()
+        if len(candles) < 10:
+            log.warning("Not enough candles to generate chart (%d)", len(candles))
+            return None
+
+        # Build clean DataFrame for mplfinance
+        chart_df = pd.DataFrame({
+            "Open": candles["open"].astype(float),
+            "High": candles["high"].astype(float),
+            "Low": candles["low"].astype(float),
+            "Close": candles["close"].astype(float),
+            "Volume": candles["volume"].astype(float),
+        })
+        if "open_time" in candles.columns:
+            chart_df.index = pd.to_datetime(candles["open_time"])
+        else:
+            chart_df.index = pd.to_datetime(candles.index)
+
+        # Build custom institutional dark theme (TradingView dark palette)
+        mc = mpf.make_marketcolors(
+            up="#089981",         # Clean TradingView teal green
+            down="#f23645",       # Crisp TradingView red
+            edge="inherit",
+            wick="inherit",
+            volume={"up": "#089981", "down": "#f23645"},
+            ohlc="inherit",
+        )
+        style = mpf.make_mpf_style(
+            base_mpf_style="nightclouds",
+            marketcolors=mc,
+            facecolor="#131722",
+            edgecolor="#1e222d",
+            figcolor="#131722",
+            gridcolor="#1e222d",
+            gridstyle="--",
+            y_on_right=True,
+            rc={
+                "font.size": 8.5,
+                "text.color": "#d1d4dc",
+                "axes.labelcolor": "#d1d4dc",
+                "xtick.color": "#787b86",
+                "ytick.color": "#787b86",
+            },
+        )
+
+        # Target symbol & timeframe
+        chart_sym = setup.symbol if setup else (symbol or (SYMBOLS[0] if SYMBOLS else "ETHUSDT"))
+        chart_tf = setup.timeframe if setup else (timeframe or "15m")
+        last_price = chart_df["Close"].iloc[-1]
+
+        # Add EMA 20 & 50 overlays
+        addplots = []
+        try:
+            if len(chart_df) >= 20:
+                ema20 = chart_df["Close"].ewm(span=20, adjust=False).mean()
+                addplots.append(mpf.make_addplot(ema20, color="#2962ff", width=1.2))
+            if len(chart_df) >= 50:
+                ema50 = chart_df["Close"].ewm(span=50, adjust=False).mean()
+                addplots.append(mpf.make_addplot(ema50, color="#ff9800", width=1.2))
+        except Exception:
+            pass
+
+        # Render figure with mplfinance returnfig=True for precision visual customization
+        fig, axlist = mpf.plot(
+            chart_df,
+            type="candle",
+            volume=True,
+            style=style,
+            addplot=addplots if addplots else None,
+            figsize=(12.8, 7.2),
+            returnfig=True,
+        )
+
+        ax = axlist[0]
+        xlim = ax.get_xlim()
+        width = xlim[1] - xlim[0]
+        x_badge1 = xlim[1] - width * 0.22
+        x_badge2 = xlim[1] - width * 0.40
+
+        # Mark Previous 1-Day Candle OHLC (PDH, PDL, PDO, PDC)
+        pd_parts = []
+        if pdh:
+            ax.axhline(pdh, color="#ff7043", linestyle="--", linewidth=1.25, alpha=0.9)
+            ax.text(
+                xlim[0] + width * 0.015, pdh,
+                "PDH (1D High)",
+                color="#ff7043", fontsize=7.2, weight="bold", verticalalignment="bottom"
+            )
+            ax.text(
+                x_badge1, pdh,
+                f" [PDH - High] {fmt_price(pdh)} ",
+                color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#d84315", edgecolor="none")
+            )
+            pd_parts.append(f"High: {fmt_price(pdh)}")
+        if pdl:
+            ax.axhline(pdl, color="#42a5f5", linestyle="--", linewidth=1.25, alpha=0.9)
+            ax.text(
+                xlim[0] + width * 0.015, pdl,
+                "PDL (1D Low)",
+                color="#42a5f5", fontsize=7.2, weight="bold", verticalalignment="top"
+            )
+            ax.text(
+                x_badge1, pdl,
+                f" [PDL - Low] {fmt_price(pdl)} ",
+                color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#1565c0", edgecolor="none")
+            )
+            pd_parts.append(f"Low: {fmt_price(pdl)}")
+        if pdo:
+            ax.axhline(pdo, color="#ba68c8", linestyle="--", linewidth=1.1, alpha=0.85)
+            ax.text(
+                xlim[0] + width * 0.015, pdo,
+                "PDO (1D Open)",
+                color="#ba68c8", fontsize=7.2, weight="bold", verticalalignment="bottom"
+            )
+            ax.text(
+                x_badge2, pdo,
+                f" [PDO - Open] {fmt_price(pdo)} ",
+                color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#6a1b9a", edgecolor="none")
+            )
+            pd_parts.append(f"Open: {fmt_price(pdo)}")
+        if pdc:
+            ax.axhline(pdc, color="#ffd54f", linestyle="--", linewidth=1.1, alpha=0.85)
+            ax.text(
+                xlim[0] + width * 0.015, pdc,
+                "PDC (1D Close)",
+                color="#ffd54f", fontsize=7.2, weight="bold", verticalalignment="bottom"
+            )
+            ax.text(
+                x_badge2, pdc,
+                f" [PDC - Close] {fmt_price(pdc)} ",
+                color="#000000", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#ffd54f", edgecolor="none")
+            )
+            pd_parts.append(f"Close: {fmt_price(pdc)}")
+        pd_ohlc_str = f" • PD-OHLC: {' | '.join(pd_parts)}" if pd_parts else ""
+
+        if setup:
+            # 1. Shaded Order Block Zone
+            ax.axhspan(setup.ob_low, setup.ob_high, color="#00e5ff", alpha=0.18, zorder=1)
+            ax.axhline(setup.ob_high, color="#00e5ff", linestyle=":", linewidth=0.8, alpha=0.6)
+            ax.axhline(setup.ob_low, color="#00e5ff", linestyle=":", linewidth=0.8, alpha=0.6)
+            ob_mid = (setup.ob_low + setup.ob_high) / 2
+            ax.text(
+                x_badge1, ob_mid,
+                f" [OB ZONE] {fmt_price(setup.ob_low)} - {fmt_price(setup.ob_high)} ",
+                color="#00e5ff", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#131722", edgecolor="#00e5ff", linewidth=0.8)
+            )
+
+            # 2. Swept Liquidity Pool Line & Tag
+            if setup.sweep_level:
+                ax.axhline(setup.sweep_level, color="#ffd700", linestyle="--", linewidth=1.4)
+                ax.text(
+                    x_badge1, setup.sweep_level,
+                    f" [SWEPT LIQUIDITY] {fmt_price(setup.sweep_level)} ",
+                    color="#000000", fontsize=7.5, weight="bold", verticalalignment="center",
+                    bbox=dict(boxstyle="square,pad=0.2", facecolor="#ffd700", edgecolor="none")
+                )
+
+            # 3. Model Entry Line & Tag
+            if setup.entry:
+                ax.axhline(setup.entry, color="#00e5ff", linestyle="-", linewidth=1.2)
+                ax.text(
+                    x_badge1, setup.entry,
+                    f" [ENTRY] {fmt_price(setup.entry)} ",
+                    color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                    bbox=dict(boxstyle="square,pad=0.2", facecolor="#00838f", edgecolor="none")
+                )
+
+            # 4. Stop Loss Line & Tag
+            if setup.stop:
+                ax.axhline(setup.stop, color="#f23645", linestyle="--", linewidth=1.3)
+                ax.text(
+                    x_badge1, setup.stop,
+                    f" [STOP LOSS] {fmt_price(setup.stop)} ",
+                    color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                    bbox=dict(boxstyle="square,pad=0.2", facecolor="#b71c1c", edgecolor="none")
+                )
+
+            # 5. Take Profit Line & Tag
+            if setup.target:
+                ax.axhline(setup.target, color="#089981", linestyle="--", linewidth=1.3)
+                ax.text(
+                    x_badge1, setup.target,
+                    f" [TAKE PROFIT] {fmt_price(setup.target)} ({CFG.rr:g}R) ",
+                    color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                    bbox=dict(boxstyle="square,pad=0.2", facecolor="#089981", edgecolor="none")
+                )
+
+            # 6. Live Current Price Marker
+            ax.axhline(last_price, color="#ffffff", linestyle=":", linewidth=1.1, alpha=0.9)
+            ax.text(
+                x_badge1, last_price,
+                f" [LIVE PRICE] {fmt_price(last_price)} ",
+                color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#37474f", edgecolor="#90a4ae", linewidth=0.8)
+            )
+
+            # Header Titles
+            fig.text(0.06, 0.958, f"{chart_sym} [{chart_tf}] • {setup.direction} Setup • Live: {fmt_price(last_price)}", fontsize=12, weight="bold", color="#ffffff")
+            fig.text(0.06, 0.922, f"Strategy: Liquidity Sweep + Order Block Retest{pd_ohlc_str} • EMA 20/50", fontsize=8.5, color="#00e5ff")
+        else:
+            # Market Overview (No Active Setup Triggered)
+            if support:
+                ax.axhline(support, color="#089981", linestyle="--", linewidth=1.3)
+                ax.text(
+                    x_badge1, support,
+                    f" [24H SUPPORT] {fmt_price(support)} ",
+                    color="#089981", fontsize=7.5, weight="bold", verticalalignment="center",
+                    bbox=dict(boxstyle="square,pad=0.2", facecolor="#1e222d", edgecolor="#089981", linewidth=0.8)
+                )
+            if resistance:
+                ax.axhline(resistance, color="#f23645", linestyle="--", linewidth=1.3)
+                ax.text(
+                    x_badge1, resistance,
+                    f" [24H RESISTANCE] {fmt_price(resistance)} ",
+                    color="#f23645", fontsize=7.5, weight="bold", verticalalignment="center",
+                    bbox=dict(boxstyle="square,pad=0.2", facecolor="#1e222d", edgecolor="#f23645", linewidth=0.8)
+                )
+
+            # Live Price Marker
+            ax.axhline(last_price, color="#2962ff", linestyle=":", linewidth=1.3, alpha=0.9)
+            ax.text(
+                x_badge1, last_price,
+                f" [LIVE PRICE] {fmt_price(last_price)} ",
+                color="#ffffff", fontsize=7.5, weight="bold", verticalalignment="center",
+                bbox=dict(boxstyle="square,pad=0.2", facecolor="#2962ff", edgecolor="none")
+            )
+
+            fig.text(0.06, 0.958, f"{chart_sym} [{chart_tf}] • Binance Real-Time Structure • Live: {fmt_price(last_price)}", fontsize=12, weight="bold", color="#ffffff")
+            fig.text(0.06, 0.922, f"Multi-Timeframe Structure{pd_ohlc_str} • EMA 20 (Blue) | EMA 50 (Orange)", fontsize=8.5, color="#90a4ae")
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=180, facecolor="#131722")
+        plt.close(fig)
+        buf.seek(0)
+
+        # Upload directly to Cloudinary
+        public_id = f"{chart_sym}_{chart_tf}_{int(time.time())}"
+        upload_result = cloudinary.uploader.upload(
+            buf,
+            folder="crypto_trading_charts",
+            public_id=public_id,
+            resource_type="image",
+            overwrite=True,
+        )
+        secure_url = upload_result.get("secure_url")
+        log.info("High-precision chart generated and uploaded to Cloudinary: %s", secure_url)
+        return secure_url
+    except Exception as exc:
+        log.warning("Chart generation or Cloudinary upload failed: %s", scrub(exc))
+        return None
+
+
+def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]:
+    """
+    Sends detected setup to Groq API using 'qwen/qwen3.8-27b' in JSON mode.
+    Strictly enforces:
+      1. AI Trade Decision (trade_pick: YES/NO, trade_pick_reason, ai_suggestion_for_trade).
+      2. Market Regime Check (TRENDING_BULLISH, TRENDING_BEARISH, RANGING, CHOPPY).
+      3. Dynamic Risk Parameters (suggested Entry, Stop Loss based on ATR/swing buffer, Take Profit, R:R).
+      4. Setup Grading ('A+', 'A', 'B+', 'B', 'C', 'D') and Confidence Score (0-100).
+    Never raises an exception (falls back gracefully so the bot loop continues).
+    """
+    if not GROQ_API_KEY:
+        log.warning("Groq API key not configured (GROQ_API_KEY). Skipping AI commentary.")
+        return None
+
+    system_prompt = (
+        "You are an elite quantitative crypto trader and Smart Money Concepts (ICT/SMC) risk manager.\n"
+        "Analyze the provided Liquidity Sweep + Order Block trading setup.\n"
+        "You MUST explicitly decide whether a trader should PICK THIS TRADE or NOT:\n"
+        '- trade_pick: "YES - TAKE TRADE" or "NO - SKIP TRADE"\n'
+        "- trade_pick_reason: 1 clear institutional sentence explaining why to pick or skip this trade.\n"
+        "- ai_suggestion_for_trade: detailed institutional advice on exact entry trigger, trade management (e.g. breakeven rule, partial TP), or reasons to avoid/protect capital.\n\n"
+        "You MUST evaluate the market regime before validating the setup:\n"
+        "- Market Regime must be one of: TRENDING_BULLISH, TRENDING_BEARISH, RANGING, CHOPPY.\n"
+        "- In a RANGING regime: Sweeps of range highs/lows into opposing order blocks are prime setups.\n"
+        "- In a TRENDING regime: Favor trend-aligned continuation sweeps. Downgrade counter-trend sweeps to 'B' or 'C' with verdict REJECT and trade_pick 'NO - SKIP TRADE' unless strong multi-timeframe reversal divergence exists.\n"
+        "- In a CHOPPY regime: Downgrade to 'C' or 'D' with verdict REJECT and trade_pick 'NO - SKIP TRADE' due to false breakout and whipsaw risk.\n\n"
+        "You MUST calculate dynamic risk parameters:\n"
+        "- suggested_entry: exact optimal entry level inside or at the Order Block.\n"
+        "- suggested_sl: dynamic Stop Loss placed beyond the sweep wick extreme using 1.0x to 1.5x ATR buffer.\n"
+        "- suggested_tp: dynamic Take Profit targeting the next major opposing liquidity pool, maintaining at least 2.0+ R:R.\n"
+        "- risk_reward_ratio: calculated R:R based on suggested entry, SL, and TP.\n\n"
+        "Respond ONLY with a valid JSON object matching this schema:\n"
+        "{\n"
+        '  "trade_pick": "YES - TAKE TRADE" | "NO - SKIP TRADE",\n'
+        '  "trade_pick_reason": "clear institutional reason why to pick or skip",\n'
+        '  "setup_grade": "A+" | "A" | "B+" | "B" | "C" | "D",\n'
+        '  "confidence_score": integer (0-100),\n'
+        '  "verdict": "APPROVE" | "REJECT",\n'
+        '  "market_regime": "TRENDING_BULLISH" | "TRENDING_BEARISH" | "RANGING" | "CHOPPY",\n'
+        '  "regime_analysis": "concise technical evaluation of trending vs ranging price action",\n'
+        '  "dynamic_risk": {\n'
+        '    "suggested_entry": float,\n'
+        '    "suggested_sl": float,\n'
+        '    "suggested_tp": float,\n'
+        '    "risk_reward_ratio": float,\n'
+        '    "sl_tp_rationale": "brief ATR and swing structure risk rationale"\n'
+        "  },\n"
+        '  "liquidity_target": "brief description of next opposing liquidity pool",\n'
+        '  "actionable_bias": "concise execution trigger and invalidation rule",\n'
+        '  "ai_suggestion_for_trade": "exact institutional advice on how to trade this setup or why to avoid it",\n'
+        '  "summary_rationale": "1-2 sentence institutional breakdown"\n'
+        "}"
     )
+
+    atr_pct = (setup.atr / setup.price * 100) if setup.price else 0.0
+    user_prompt = (
+        f"Asset: {setup.symbol}\n"
+        f"Direction: {setup.direction}\n"
+        f"Timeframe: {setup.timeframe}\n"
+        f"Current Price: {fmt_price(setup.price)}\n"
+        f"Swept Level: {fmt_price(setup.sweep_level)} (Wick Extreme: {fmt_price(setup.sweep_extreme)})\n"
+        f"Order Block Zone: {fmt_price(setup.ob_low)} - {fmt_price(setup.ob_high)}\n"
+        f"ATR(14): {fmt_price(setup.atr)} ({atr_pct:.2f}%)\n"
+        f"HTF Structure (4h/1h): {setup.htf_bias or 'Not available'}\n"
+        f"Confluence: {setup.confluence or 'Standard Setup'}\n"
+        f"Retest Status: {'Price currently inside OB zone' if setup.retest == 'live' else 'Last closed candle wicked into OB'}\n"
+        f"Proposed Ref Entry: {fmt_price(setup.entry)} | SL: {fmt_price(setup.stop)} | TP: {fmt_price(setup.target)} (R:R {CFG.rr:g})\n"
+        f"Timestamp: {fmt_ts(now)}"
+    )
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+        "max_tokens": 700,
+    }
+
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                raw_content = resp.json()["choices"][0]["message"]["content"].strip()
+                parsed = json.loads(raw_content)
+                log.info("Groq AI response for %s %s (%s) | Pick: %s | Grade: %s | Score: %s | Regime: %s",
+                         setup.symbol, setup.direction, setup.timeframe,
+                         parsed.get("trade_pick"), parsed.get("setup_grade"), parsed.get("confidence_score"), parsed.get("market_regime"))
+                return parsed
+            elif resp.status_code == 429:
+                log.warning("Groq rate limit (429). Pausing before retry...")
+                time.sleep(2)
+                continue
+            else:
+                log.warning("Groq API error HTTP %s: %s", resp.status_code, scrub(resp.text))
+                break
+        except Exception as exc:
+            log.warning("Groq API request failed (attempt %d/2): %s", attempt + 1, scrub(exc))
+            time.sleep(1)
+
+    return None
+
+
+def is_high_confidence_setup(ai_data: Optional[Dict[str, Any]]) -> bool:
+    """
+    Evaluates whether setup meets strict institutional quality criteria.
+    Requires Grade in ('A+', 'A', 'B+'), verdict == 'APPROVE', trade_pick starting with 'YES', and confidence >= 65.
+    If AI is not configured or failed, returns True to allow fallback alerts.
+    """
+    if not ai_data:
+        return True
+    grade = str(ai_data.get("setup_grade", "")).strip().upper()
+    confidence = int(ai_data.get("confidence_score", 0))
+    verdict = str(ai_data.get("verdict", "")).strip().upper()
+    pick = str(ai_data.get("trade_pick", "")).strip().upper()
+
+    if grade in ("A+", "A", "B+") and verdict == "APPROVE" and "YES" in pick and confidence >= 65:
+        return True
+    return False
+
+
+def format_ai_insight_text(data: Dict[str, Any]) -> str:
+    """Formats structured Groq JSON into a clean, professional institutional summary for Telegram & logging."""
+    pick = data.get("trade_pick", "YES - TAKE TRADE" if data.get("verdict") == "APPROVE" else "NO - SKIP TRADE")
+    pick_icon = "✅" if "YES" in str(pick).upper() else "❌"
+    pick_reason = data.get("trade_pick_reason", "")
+    grade = data.get("setup_grade", "N/A")
+    score = data.get("confidence_score", "N/A")
+    verdict = data.get("verdict", "N/A")
+    regime = data.get("market_regime", "N/A")
+    regime_desc = data.get("regime_analysis", "")
+    risk = data.get("dynamic_risk", {}) or {}
+    s_entry = risk.get("suggested_entry")
+    s_sl = risk.get("suggested_sl")
+    s_tp = risk.get("suggested_tp")
+    rr = risk.get("risk_reward_ratio")
+    rationale = risk.get("sl_tp_rationale", "")
+    target = data.get("liquidity_target", "")
+    action = data.get("actionable_bias", "")
+    suggestion = data.get("ai_suggestion_for_trade", "")
+
+    lines = [
+        f"🤖 *AI Trade Decision:* {pick_icon} *{pick}* (Grade `{grade}` | {score}/100)",
+    ]
+    if pick_reason:
+        lines.append(f"💬 *AI Decision Reason:* _{pick_reason}_")
+
+    lines.append(f"🌐 *Market Regime:* `{regime}`")
+    if regime_desc:
+        lines.append(f"   _{regime_desc}_")
+
+    if s_entry is not None and s_sl is not None and s_tp is not None:
+        rr_str = f"{rr:g}R" if isinstance(rr, (int, float)) else f"{rr}"
+        lines.append(f"🛡️ *Dynamic Risk (ATR/Structure):* Entry `{fmt_price(float(s_entry))}` | SL `{fmt_price(float(s_sl))}` | TP `{fmt_price(float(s_tp))}` ({rr_str})")
+        if rationale:
+            lines.append(f"   _{rationale}_")
+
+    if target:
+        lines.append(f"🎯 *Liquidity Target:* {target}")
+    if suggestion:
+        lines.append(f"💡 *AI Suggestion for Trade:* {suggestion}")
+    elif action:
+        lines.append(f"💡 *AI Suggestion for Trade:* {action}")
+
+    return "\n".join(lines)
+
+
+def generate_market_ai_suggestions_batch(assets_data: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """
+    Sends all monitored assets to Groq API using 'qwen/qwen3.8-27b' in a single fast batch request
+    to generate real institutional AI Trade Picks & Trade Suggestions for each crypto asset.
+    Returns: Dict[symbol, {"trade_pick": str, "ai_suggestion": str}]
+    """
+    if not GROQ_API_KEY or not assets_data:
+        return {}
+
+    system_prompt = (
+        "You are an elite quantitative crypto trader and portfolio risk manager.\n"
+        "Analyze the live market data for each crypto asset.\n"
+        "For EACH asset, you MUST provide:\n"
+        '1. trade_pick: A short, decisive recommendation, e.g. "BUY ON DIP (LONG)", "SELL ON RALLY (SHORT)", "WAIT / NEUTRAL", "BREAKOUT WATCH", or "AVOID / CHOPPY".\n'
+        "2. ai_suggestion: 1-2 punchy, institutional sentences with exact actionable price advice (key support/resistance levels, entry zones, risk warnings).\n\n"
+        "Respond ONLY with a valid JSON object mapping each symbol to its analysis:\n"
+        "{\n"
+        '  "ETHUSDT": {\n'
+        '    "trade_pick": "...",\n'
+        '    "ai_suggestion": "..."\n'
+        "  },\n"
+        "  ...\n"
+        "}"
+    )
+
+    lines = ["Live crypto assets data:"]
+    for item in assets_data:
+        sym = item.get("symbol")
+        price = item.get("price", 0.0)
+        chg = item.get("chg", 0.0)
+        h = item.get("high", 0.0)
+        l = item.get("low", 0.0)
+        trend = item.get("trend") or "RANGING"
+        pd_info = ""
+        if "pdh" in item and item["pdh"]:
+            pd_info = f" | PrevDay: H {fmt_price(item['pdh'])}, L {fmt_price(item['pdl'])}, O {fmt_price(item['pdo'])}, C {fmt_price(item['pdc'])}"
+        lines.append(f"- {sym}: Price ${price:,.2f} | 24h: {chg:+.2f}% (Range: ${l:,.2f} - ${h:,.2f}) | Structure: {trend}{pd_info}")
+    user_prompt = "\n".join(lines)
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+        "max_tokens": 800
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 200:
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
+            parsed = json.loads(raw)
+            log.info("Batch Groq AI trade suggestions generated for %d assets.", len(parsed))
+            return parsed
+        else:
+            log.warning("Batch Groq AI suggestion error HTTP %s: %s", resp.status_code, scrub(resp.text))
+    except Exception as exc:
+        log.warning("Batch Groq AI suggestion failed: %s", scrub(exc))
+    return {}
+
+
+def format_alert(s: Setup, now: datetime, is_high_conf: bool = True) -> str:
+    icon = "🟢" if s.direction == "LONG" else "🔴"
+    retest = "Price is inside the OB zone" if s.retest == "live" else "Last closed candle wicked into the OB"
+    header_tag = "🚨 *HIGH-PROBABILITY ENTRY ALERT*" if is_high_conf else "⚠️ *TRADE SETUP DETECTED (AI CAUTION)*"
+
+    lines = [
+        f"{header_tag}: *{s.symbol} ({s.timeframe})*",
+        f"Setup: *Liquidity Sweep + OB Retest* | Price: `{fmt_price(s.price)}`",
+        f"Time: `{fmt_ts(now)}`",
+        "",
+        f"{icon} *Direction:* {s.direction}   |   *Timeframe:* {s.timeframe}",
+        f"💧 *Swept Liquidity:* `{fmt_price(s.sweep_level)}` (Wick to `{fmt_price(s.sweep_extreme)}`)",
+        f"🧱 *Order Block Zone:* `{fmt_price(s.ob_low)} - {fmt_price(s.ob_high)}`",
+        f"🔄 *Retest Status:* {retest}",
+        f"🎯 *Reference Model Levels ({CFG.rr:g}R):* Entry `{fmt_price(s.entry)}` | SL `{fmt_price(s.stop)}` | TP `{fmt_price(s.target)}`",
+    ]
+
+    if s.htf_bias:
+        lines.append(f"🌐 *HTF Structure (4h/1h):* {s.htf_bias}")
+    if s.confluence:
+        lines.append(f"📊 *Confluence:* {s.confluence}")
+
+    if s.ai_data:
+        lines.append("")
+        lines.append("🤖 *Groq AI Institutional Analysis (Qwen 27B):*")
+        lines.append(format_ai_insight_text(s.ai_data))
+    elif s.ai_insight:
+        lines.append("")
+        lines.append("🤖 *Groq AI Market Intelligence:*")
+        lines.append(s.ai_insight)
+
+    if s.chart_url:
+        lines.append("")
+        lines.append(f"🖼️ *Institutional Chart:* [View High-Res Chart]({s.chart_url})")
+
+    lines.append(f"📈 *Live Interactive Chart:* [Open {s.symbol} on TradingView](https://www.tradingview.com/chart/?symbol=BINANCE:{s.symbol})")
+
+    sheet_url = get_sheet_link()
+    if sheet_url:
+        lines.append("")
+        lines.append(f"📊 *Google Sheet:* [Open Live Sheet & Audit Log]({sheet_url})")
+
+    lines.append("")
+    lines.append("⚠️ _Quantitative alert only - not financial advice. Confirm with price action on your chart._")
+
+    return "\n".join(lines)
 
 
 # =============================================================================
 # GOOGLE SHEETS
 # =============================================================================
 SHEET_HEADERS = {
-    "Alerts": ["Timestamp", "Symbol", "Timeframe", "Direction", "Setup", "Price", "Swept Level",
-               "OB Low", "OB High", "Ref Entry", "Ref Stop", "Ref Target"],
-    "Daily Summary": ["Date", "Scan Cycles", "Errors", "Assets Scanned", "Market Status (day change)",
-                      "Bias", "Setups Triggered", "Setup Details"],
-    "Scan Log": ["Timestamp", "Assets Scanned", "Prices", "Triggered Setups", "Status"],
+    "Alerts": [
+        "Timestamp", "Symbol", "Timeframe", "Direction", "Setup", "Price",
+        "Swept Level", "OB Low", "OB High", "Ref Entry", "Ref Stop", "Ref Target",
+        "Confluence", "AI Trade Pick", "AI Pick Reason", "AI Suggestion for Trade",
+        "Setup Grade", "Confidence Score", "Market Regime", "Dynamic Entry",
+        "Dynamic Stop Loss", "Dynamic Take Profit", "Risk Reward", "Chart URL"
+    ],
+    "AI Trade Suggestions": [
+        "Timestamp", "Symbol", "Timeframe", "Direction", "Current Price",
+        "AI Trade Pick", "AI Pick Reason", "AI Suggestion for Trade",
+        "Setup Grade", "Confidence Score", "Market Regime",
+        "Dynamic Entry", "Dynamic Stop Loss", "Dynamic Take Profit", "Risk Reward",
+        "Liquidity Target", "Actionable Plan & Invalidation", "Chart URL"
+    ],
+    "Daily Summary": [
+        "Date", "Scan Cycles", "Errors", "Assets Scanned", "Market Status (day change)",
+        "Bias", "Setups Triggered", "Setup Details"
+    ],
+    "Scan Log": [
+        "Timestamp", "Assets Scanned", "Prices", "Triggered Setups", "Status"
+    ],
 }
+
+
+def get_sheet_link() -> Optional[str]:
+    """Returns the direct clickable URL to the Google Sheet if configured."""
+    custom_url = env_str("GOOGLE_SHEET_URL")
+    if custom_url:
+        return custom_url
+    if GOOGLE_SHEET_ID:
+        return f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/edit"
+    return None
 
 
 def sheets_enabled() -> bool:
     mode = env_str("ENABLE_SHEETS", "auto").lower()
     if mode in ("0", "false", "no", "off"):
         return False
-    return bool(gspread and Path(GOOGLE_CREDENTIALS_FILE).exists() and (GOOGLE_SHEET_ID or GOOGLE_SHEET_NAME))
+    if not gspread:
+        return False
+    has_creds = bool(GOOGLE_CREDENTIALS_JSON or Path(GOOGLE_CREDENTIALS_FILE).exists())
+    has_target = bool(GOOGLE_SHEET_ID or GOOGLE_SHEET_NAME)
+    return has_creds and has_target
 
 
 class SheetsLogger:
@@ -511,7 +1324,27 @@ class SheetsLogger:
         self.ws_cache: Dict[str, Any] = {}
 
     def _connect(self) -> None:
-        gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_FILE)
+        if GOOGLE_CREDENTIALS_JSON:
+            try:
+                raw_json = GOOGLE_CREDENTIALS_JSON.strip()
+                if (raw_json.startswith("'") and raw_json.endswith("'")) or (raw_json.startswith('"') and raw_json.endswith('"')):
+                    raw_json = raw_json[1:-1].strip()
+                creds_dict = json.loads(raw_json)
+                if "private_key" in creds_dict and "\\n" in creds_dict["private_key"]:
+                    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+                gc = gspread.service_account_from_dict(creds_dict)
+                log.info("Connected to Google Sheets via .env secret (GOOGLE_CREDENTIALS_JSON)")
+            except Exception as exc:
+                log.warning("Failed to authenticate via GOOGLE_CREDENTIALS_JSON (.env): %s. Falling back to %s", exc, GOOGLE_CREDENTIALS_FILE)
+                if Path(GOOGLE_CREDENTIALS_FILE).exists():
+                    gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_FILE)
+                    log.info("Connected to Google Sheets via %s", GOOGLE_CREDENTIALS_FILE)
+                else:
+                    raise
+        else:
+            gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_FILE)
+            log.info("Connected to Google Sheets via %s", GOOGLE_CREDENTIALS_FILE)
+
         self.sh = gc.open_by_key(GOOGLE_SHEET_ID) if GOOGLE_SHEET_ID else gc.open(GOOGLE_SHEET_NAME)
         self.ws_cache = {}
         log.info("Connected to Google Sheet: %s", self.sh.title)
@@ -519,12 +1352,22 @@ class SheetsLogger:
     def _worksheet(self, tab: str):
         if tab in self.ws_cache:
             return self.ws_cache[tab]
-        header = SHEET_HEADERS[tab]
+        header = SHEET_HEADERS.get(tab, [])
         try:
             ws = self.sh.worksheet(tab)
+            # Ensure headers match if existing row 1 is outdated or shorter
+            existing = ws.row_values(1)
+            if not existing and header:
+                ws.append_row(header, value_input_option="RAW")
+            elif existing and len(existing) < len(header):
+                try:
+                    ws.insert_row(header, 1, value_input_option="RAW")
+                except Exception:
+                    pass
         except gspread.exceptions.WorksheetNotFound:
-            ws = self.sh.add_worksheet(title=tab, rows=1000, cols=max(len(header), 10))
-            ws.append_row(header, value_input_option="RAW")
+            ws = self.sh.add_worksheet(title=tab, rows=1000, cols=max(len(header), 12))
+            if header:
+                ws.append_row(header, value_input_option="RAW")
         self.ws_cache[tab] = ws
         return ws
 
@@ -537,6 +1380,39 @@ class SheetsLogger:
             self.sh = None            # force a clean reconnect next time
             self.ws_cache = {}
             raise
+
+    def update_sheet1(self, rows: list) -> None:
+        """Append rows to Sheet1 with explicit AI Trade Pick & Suggestion columns."""
+        headers = [
+            "Timestamp", "Asset / Symbol", "Current Price", "24h High", "24h Low",
+            "24h Change %", "Bias", "Scanner Status", "AI Trade Pick", "AI Suggestion for Trade"
+        ]
+        for attempt in range(2):
+            try:
+                if self.sh is None:
+                    self._connect()
+                try:
+                    ws = self.sh.worksheet("Sheet1")
+                except Exception:
+                    ws = self.sh.add_worksheet(title="Sheet1", rows=1000, cols=12)
+
+                # Check if headers exist; if empty or outdated, ensure full headers
+                existing = ws.row_values(1)
+                if not existing or len(existing) < len(headers):
+                    try:
+                        ws.insert_row(headers, 1, value_input_option="RAW")
+                    except Exception:
+                        ws.append_row(headers, value_input_option="RAW")
+
+                # Append new data below old data (never clear)
+                ws.append_rows(rows, value_input_option="RAW")
+                return
+            except Exception as exc:
+                self.sh = None
+                self.ws_cache = {}
+                if attempt == 1:
+                    log.warning("Could not append to Sheet1: %s", exc)
+                time.sleep(1)
 
 
 # =============================================================================
@@ -628,26 +1504,86 @@ def roll_day_if_needed(state: dict, now: datetime) -> None:
 # =============================================================================
 # MAIN SCAN CYCLE
 # =============================================================================
-def handle_setup(setup: Setup, now: datetime, state: dict) -> Optional[str]:
-    """Send Telegram + queue a sheet row. Returns a short description if handled."""
-    log.info("SETUP %s %s | price %s | OB %s-%s", setup.symbol, setup.direction,
+def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataFrame] = None, client: Optional[BinanceClient] = None) -> Optional[str]:
+    """Generate structured Groq AI insight, render chart to Cloudinary, apply confidence filter, send Telegram photo alert, and queue Google Sheets row."""
+    log.info("SETUP %s %s (%s) | price %s | OB %s-%s", setup.symbol, setup.direction, setup.timeframe,
              fmt_price(setup.price), fmt_price(setup.ob_low), fmt_price(setup.ob_high))
-    sent = send_telegram(format_alert(setup, now))
+
+    # 1. Fetch structured Groq AI insight (JSON mode)
+    ai_data = generate_ai_insight(setup, now)
+    setup.ai_data = ai_data
+    setup.ai_insight = format_ai_insight_text(ai_data) if ai_data else None
+
+    # Render chart to Cloudinary immediately (with PDO, PDH, PDL, PDC levels)
+    chart_url = None
+    if df is not None:
+        pdo, pdh, pdl, pdc = get_daily_levels(client, setup.symbol) if client else (None, None, None, None)
+        chart_url = generate_and_upload_chart(df, setup=setup, pdo=pdo, pdh=pdh, pdl=pdl, pdc=pdc)
+    setup.chart_url = chart_url
+
+    # Parse AI fields
+    pick = ai_data.get("trade_pick", "YES - TAKE TRADE" if ai_data and ai_data.get("verdict") == "APPROVE" else "NO - SKIP TRADE") if ai_data else "N/A"
+    pick_reason = ai_data.get("trade_pick_reason", ai_data.get("summary_rationale", "N/A")) if ai_data else "N/A"
+    suggestion = ai_data.get("ai_suggestion_for_trade", ai_data.get("actionable_bias", "N/A")) if ai_data else "N/A"
+    grade = ai_data.get("setup_grade", "N/A") if ai_data else "N/A"
+    score = ai_data.get("confidence_score", "N/A") if ai_data else "N/A"
+    regime = ai_data.get("market_regime", "N/A") if ai_data else "N/A"
+    verdict = ai_data.get("verdict", "N/A") if ai_data else "N/A"
+    risk = ai_data.get("dynamic_risk", {}) if ai_data else {}
+    dyn_entry = risk.get("suggested_entry", setup.entry) or setup.entry
+    dyn_sl = risk.get("suggested_sl", setup.stop) or setup.stop
+    dyn_tp = risk.get("suggested_tp", setup.target) or setup.target
+    dyn_rr = risk.get("risk_reward_ratio", CFG.rr) or CFG.rr
+    liq_target = ai_data.get("liquidity_target", "N/A") if ai_data else "N/A"
+    actionable = ai_data.get("actionable_bias", "N/A") if ai_data else "N/A"
+
+    # 2. Check setup confidence level (High vs Caution)
+    is_high_conf = is_high_confidence_setup(ai_data)
+    setup_status = f"Grade {grade} ({score}/100)" if ai_data else "Raw Strategy Setup"
+
+    # 3. Always dispatch Telegram Photo Alert with full AI suggestions and chart!
+    msg = format_alert(setup, now, is_high_conf=is_high_conf)
+    sent = send_telegram_chart_alert(msg, photo_url=chart_url, parse_mode="Markdown")
     if not sent and telegram_configured():
-        log.warning("Alert for %s not delivered - will retry next cycle.", setup.symbol)
-        return None                      # not marked as alerted -> retried next scan
+        sent = send_telegram(msg)        # retry plain text without parse_mode if Markdown parsing failed
+        if not sent:
+            log.warning("Alert for %s (%s) not delivered - will retry next cycle.", setup.symbol, setup.timeframe)
+            return None
+
     state["alerted"][setup.key] = time.time()
-    desc = f"{setup.symbol} {setup.direction} @ {fmt_price(setup.price)}"
+    desc = f"{setup.symbol} {setup.direction} ({setup.timeframe}) @ {fmt_price(setup.price)}"
+    if ai_data and "setup_grade" in ai_data:
+        desc += f" [Pick: {pick} | Grade {grade}]"
     state["stats"]["alerts"].append(desc)
+
+    # 4. Queue row in Google Sheets "Alerts" tab
     queue_row(state, "Alerts", [
-        fmt_ts(now), setup.symbol, setup.timeframe, setup.direction, "Liquidity Sweep + OB Retest",
+        fmt_ts(now), setup.symbol, setup.timeframe, setup.direction,
+        f"Liquidity Sweep + OB Retest [{setup_status}]",
         round(setup.price, 6), round(setup.sweep_level, 6), round(setup.ob_low, 6),
-        round(setup.ob_high, 6), round(setup.entry, 6), round(setup.stop, 6), round(setup.target, 6),
+        round(setup.ob_high, 6), round(float(dyn_entry), 6), round(float(dyn_sl), 6), round(float(dyn_tp), 6),
+        setup.confluence or "Standard",
+        pick, pick_reason, suggestion,
+        grade, score, regime,
+        round(float(dyn_entry), 6), round(float(dyn_sl), 6), round(float(dyn_tp), 6), dyn_rr,
+        chart_url or "N/A",
+    ])
+
+    # 5. Queue in dedicated "AI Trade Suggestions" tab
+    queue_row(state, "AI Trade Suggestions", [
+        fmt_ts(now), setup.symbol, setup.timeframe, setup.direction, round(setup.price, 6),
+        pick, pick_reason, suggestion,
+        grade, score, regime,
+        round(float(dyn_entry), 6), round(float(dyn_sl), 6), round(float(dyn_tp), 6), dyn_rr,
+        liq_target, actionable,
+        chart_url or "N/A",
     ])
     return desc
 
 
 def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict, health: dict) -> None:
+    if not SCANNING_ACTIVE.is_set():
+        return
     now = datetime.now(LOCAL_TZ)
     roll_day_if_needed(state, now)
     stats = state["stats"]
@@ -658,19 +1594,59 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
     errors = 0
 
     for sym in SYMBOLS:
-        if STOP.is_set():
+        if STOP.is_set() or not SCANNING_ACTIVE.is_set():
             break
         try:
-            df = client.klines(sym, TIMEFRAME, KLINE_LIMIT)
             price = client.price(sym)
             prices[sym] = price
             update_symbol_stats(stats, sym, price)
-            for setup in detect_setup(df, sym, price, CFG):
-                if setup.key in state["alerted"]:
-                    continue
-                desc = handle_setup(setup, now, state)
-                if desc:
-                    triggered.append(desc)
+
+            # 1. Fetch candles across all configured timeframes
+            tf_dfs: Dict[str, pd.DataFrame] = {}
+            for tf in TIMEFRAMES:
+                try:
+                    df = client.klines(sym, tf, KLINE_LIMIT)
+                    tf_dfs[tf] = df
+                except BinanceError as exc:
+                    log.warning("%s (%s): %s", sym, tf, exc)
+                STOP.wait(0.05)
+
+            # 2. Compute Higher-Timeframe (HTF) trend & structure (4h, 1h)
+            htf_parts = []
+            for htf in ("4h", "1h"):
+                if htf in tf_dfs:
+                    tr = compute_trend(tf_dfs[htf])
+                    ico = "🟢" if "BULL" in tr else "🔴" if "BEAR" in tr else "🟡"
+                    htf_parts.append(f"{htf} {ico} {tr}")
+            htf_summary = " | ".join(htf_parts) if htf_parts else None
+
+            # 3. Detect Liquidity Sweep + OB Retest setups across all timeframes
+            for tf, df in tf_dfs.items():
+                for setup in detect_setup(df, sym, price, CFG, tf):
+                    setup.htf_bias = htf_summary
+                    if htf_summary:
+                        if setup.direction == "LONG":
+                            if "BULL" in htf_summary and "BEAR" not in htf_summary:
+                                setup.confluence = "⚡ High Probability (Aligned with HTF Bull Trend)"
+                            elif "BEAR" in htf_summary and "BULL" not in htf_summary:
+                                setup.confluence = "⚠️ Counter-Trend Retracement (HTF is Bearish)"
+                            else:
+                                setup.confluence = "⚖️ Mixed HTF Alignment"
+                        else:  # SHORT
+                            if "BEAR" in htf_summary and "BULL" not in htf_summary:
+                                setup.confluence = "⚡ High Probability (Aligned with HTF Bear Trend)"
+                            elif "BULL" in htf_summary and "BEAR" not in htf_summary:
+                                setup.confluence = "⚠️ Counter-Trend Retracement (HTF is Bullish)"
+                            else:
+                                setup.confluence = "⚖️ Mixed HTF Alignment"
+                    elif tf in ("4h", "1h"):
+                        setup.confluence = "💎 HTF Setup"
+
+                    if setup.key in state["alerted"]:
+                        continue
+                    desc = handle_setup(setup, now, state, df=df, client=client)
+                    if desc:
+                        triggered.append(desc)
         except BinanceError as exc:
             errors += 1
             stats["errors"] += 1
@@ -679,7 +1655,7 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
             errors += 1
             stats["errors"] += 1
             log.exception("%s: unexpected error", sym)
-        STOP.wait(0.3)                   # gentle pacing between symbols
+        STOP.wait(0.2)                   # gentle pacing between symbols
 
     # --- health monitoring: warn via Telegram if everything keeps failing ----------
     if SYMBOLS and errors == len(SYMBOLS):
@@ -709,6 +1685,675 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
 
 
 # =============================================================================
+# TELEGRAM ON-DEMAND INTERACTIVE LISTENER (/start, /scan, /status)
+# =============================================================================
+def handle_telegram_start(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict, chat_id: str, is_activity_report: bool = False) -> None:
+    now = datetime.now(LOCAL_TZ)
+    if is_activity_report:
+        send_telegram("🤖 *Main abhi analysis aur live activity report taiyar kar raha hoon... Ek pal rukhein!*", chat_id=chat_id, parse_mode="Markdown")
+    else:
+        send_telegram("⏳ *Fetching live market data & generating Groq AI trade suggestions...*", chat_id=chat_id, parse_mode="Markdown")
+
+    market_raw = []
+    prices_summary = []
+    triggered = []
+    mtf_trends = []
+
+    # 1. Fetch 24h ticker data and multi-timeframe candles
+    for sym in SYMBOLS:
+        if STOP.is_set():
+            break
+        try:
+            data_24h = client._get("/api/v3/ticker/24hr", {"symbol": sym})
+            price = float(data_24h.get("lastPrice", 0))
+            high = float(data_24h.get("highPrice", 0))
+            low = float(data_24h.get("lowPrice", 0))
+            chg = float(data_24h.get("priceChangePercent", 0))
+
+            price_str = f"${price:,.4f}" if price < 10 else f"${price:,.2f}"
+            high_str = f"${high:,.4f}" if high < 10 else f"${high:,.2f}"
+            low_str = f"${low:,.4f}" if low < 10 else f"${low:,.2f}"
+
+            prices_summary.append(f"{sym}:{fmt_price(price)}")
+
+            # Multi-timeframe trend & setup check
+            sym_tfs = []
+            tf_dfs = {}
+            for tf in TIMEFRAMES:
+                try:
+                    df = client.klines(sym, tf, KLINE_LIMIT)
+                    tf_dfs[tf] = df
+                    tr = compute_trend(df)
+                    ico = "🟢" if "BULL" in tr else "🔴" if "BEAR" in tr else "🟡"
+                    sym_tfs.append(f"{tf} {ico}")
+                except Exception as exc:
+                    log.warning("%s (%s): on-demand kline fetch failed: %s", sym, tf, exc)
+                STOP.wait(0.05)
+
+            if sym_tfs:
+                mtf_trends.append(f"• *{sym}*: " + " | ".join(sym_tfs))
+
+            # Confluence check for setups
+            htf_parts = []
+            for htf in ("4h", "1h"):
+                if htf in tf_dfs:
+                    tr = compute_trend(tf_dfs[htf])
+                    ico = "🟢" if "BULL" in tr else "🔴" if "BEAR" in tr else "🟡"
+                    htf_parts.append(f"{htf} {ico} {tr}")
+            htf_summary = " | ".join(htf_parts) if htf_parts else None
+
+            # Detect any active setups
+            sym_setups = []
+            for tf, df in tf_dfs.items():
+                try:
+                    for setup in detect_setup(df, sym, price, CFG, tf):
+                        setup.htf_bias = htf_summary
+                        desc = f"{setup.symbol} {setup.direction} ({tf}) @ {fmt_price(setup.price)}"
+                        triggered.append(desc)
+                        sym_setups.append(setup)
+                except Exception as exc:
+                    log.warning("%s (%s): setup check failed: %s", sym, tf, exc)
+
+            primary_df = tf_dfs.get("15m")
+            if primary_df is None and tf_dfs:
+                primary_df = next(iter(tf_dfs.values()), None)
+
+            market_raw.append({
+                "sym": sym,
+                "price": price,
+                "high": high,
+                "low": low,
+                "chg": chg,
+                "price_str": price_str,
+                "high_str": high_str,
+                "low_str": low_str,
+                "htf_summary": htf_summary,
+                "setups": sym_setups,
+                "df_primary": primary_df,
+                "tf_dfs": tf_dfs,
+            })
+        except Exception as exc:
+            log.warning("Error fetching on-demand data for %s: %s", sym, exc)
+        STOP.wait(0.1)
+
+    # 2. Generate Real AI Trade Picks & Suggestions via Groq batch analysis
+    ai_batch = generate_market_ai_suggestions_batch([
+        {
+            "symbol": item["sym"],
+            "price": item["price"],
+            "high": item["high"],
+            "low": item["low"],
+            "chg": item["chg"],
+            "trend": item["htf_summary"] or ("BULLISH" if item["chg"] >= 0 else "BEARISH")
+        }
+        for item in market_raw
+    ])
+
+    # 3. Generate Live Chart Images via Cloudinary for ALL Monitored Symbols
+    sym_chart_urls: Dict[str, str] = {}
+    report_chart_url = None
+
+    for item in market_raw:
+        sym = item["sym"]
+        sym_chart = None
+
+        # If a Liquidity Sweep setup was detected for this symbol, render the setup chart
+        for s in item["setups"]:
+            s_tf = s.timeframe
+            s_df = item.get("tf_dfs", {}).get(s_tf)
+            if s_df is not None:
+                s_pdo, s_pdh, s_pdl, s_pdc = get_daily_levels(client, s.symbol)
+                s.chart_url = generate_and_upload_chart(s_df, setup=s, pdo=s_pdo, pdh=s_pdh, pdl=s_pdl, pdc=s_pdc)
+                if s.chart_url:
+                    sym_chart = s.chart_url
+                    if not report_chart_url:
+                        report_chart_url = s.chart_url
+                    break
+
+        # If no setup triggered for this symbol, render its real-time multi-timeframe structure chart with PD-OHLC!
+        if not sym_chart:
+            sym_df = item.get("df_primary")
+            if sym_df is None:
+                try:
+                    sym_df = client.klines(sym, "15m", 65)
+                except Exception:
+                    pass
+            if sym_df is not None:
+                pdo, pdh, pdl, pdc = get_daily_levels(client, sym)
+                sym_chart = generate_and_upload_chart(
+                    sym_df,
+                    symbol=sym,
+                    timeframe="15m",
+                    support=item.get("low"),
+                    resistance=item.get("high"),
+                    pdo=pdo,
+                    pdh=pdh,
+                    pdl=pdl,
+                    pdc=pdc,
+                )
+
+        if sym_chart:
+            sym_chart_urls[sym] = sym_chart
+            if not report_chart_url:
+                report_chart_url = sym_chart
+
+    # Select the most volatile/top moving symbol for the featured Telegram report photo if no active setup triggered
+    if not report_chart_url and market_raw:
+        top_item = max(market_raw, key=lambda it: abs(it.get("chg", 0.0)))
+        report_chart_url = sym_chart_urls.get(top_item["sym"])
+
+    if is_activity_report:
+        status_str = "🟢 ACTIVE & SCANNING 24/7" if SCANNING_ACTIVE.is_set() else "🛑 PAUSED (Band)"
+        stats = state.get("stats", {})
+        total_scans = stats.get("scans", 0)
+        total_alerts = len(stats.get("alerts", []))
+        lines = [
+            "🤖 *BOT LIVE ACTIVITY & ANALYSIS REPORT*",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "📌 *Sawaal:* _What are you doing? / Kya kar rahe ho?_",
+            "",
+            f"⚡ *Bot Status:* {status_str}",
+            f"🕒 *Current Time:* {fmt_ts(now)}",
+            f"⏱️ *Scan Interval:* Har {SCAN_INTERVAL} seconds me automated scan",
+            f"🎯 *Strategy:* Liquidity Sweep + Displacement (MSS) + Order Block Retest",
+            f"🧠 *AI Engine:* Groq `{GROQ_MODEL}` (Market Regime + Dynamic ATR SL/TP)",
+            "",
+            "📋 *Abhi Kya Kaam Ho Raha Hai:*",
+            f"1. *Multi-Asset Monitor:* 7 assets ({', '.join(SYMBOLS)}) par 24/7 tracking chal rahi hai.",
+            f"2. *Multi-Timeframe Scan:* {', '.join(TIMEFRAMES)} candles par liquidity grab aur OB zones detect ho rahe hain.",
+            "3. *Groq AI Filtering:* Weak setups (< Grade B+) ko suppress karke sirf high-probability trades filter kiye ja rahe hain.",
+            "4. *Google Sheets Sync:* Har alert aur AI suggestion live Google Sheet me cloud-logged ho raha hai.",
+            "",
+            "📈 *Aaj Ki Activity Stats:*",
+            f"• Total Scan Cycles: `{total_scans}`",
+            f"• High-Probability Alerts: `{total_alerts}`",
+            f"• Google Sheets Connected: `{'YES ✅' if SHEETS_ON else 'NO ❌'}`",
+            "",
+            "📊 *Live Market Snapshot & Current AI Picks:*"
+        ]
+    else:
+        lines = [
+            "📊 *MULTI-TIMEFRAME SCANNER & AI TRADE SUGGESTIONS*",
+            "",
+            f"🕒 *Time:* {fmt_ts(now)}",
+            f"⏱️ *Active Timeframes:* {', '.join(TIMEFRAMES)}",
+            "",
+            "🤖 *AI Trade Picks & Suggestions for All Monitored Assets:*"
+        ]
+
+    market_rows = []
+    for item in market_raw:
+        sym = item["sym"]
+        price = item["price"]
+        high = item["high"]
+        low = item["low"]
+        chg = item["chg"]
+        htf_summary = item["htf_summary"]
+        sym_setups = item["setups"]
+
+        ai_item = ai_batch.get(sym, {})
+        ai_pick = ai_item.get("trade_pick", "BUY ON DIP (LONG)" if chg > 1 else "WAIT / NEUTRAL")
+        ai_sugg = ai_item.get("ai_suggestion", f"24h change {chg:+.2f}%. Await key support retest.")
+
+        # If a live Liquidity Sweep setup was detected, prioritize that setup
+        if sym_setups:
+            s = sym_setups[0]
+            ai_pick = f"YES - {s.direction} ({s.timeframe})"
+            ai_sugg = f"Liquidity sweep at {fmt_price(s.sweep_level)}. Retest in OB zone ({fmt_price(s.ob_low)} - {fmt_price(s.ob_high)}). Entry {fmt_price(s.entry)}, SL {fmt_price(s.stop)}, TP {fmt_price(s.target)}."
+
+        chart_link_md = f" • [📊 Chart]({sym_chart_urls[sym]})" if sym in sym_chart_urls else ""
+        lines.append(f"• *{sym}*: `{item['price_str']}` ({chg:+.2f}%) | 🤖 *Pick:* `{ai_pick}`{chart_link_md}")
+        lines.append(f"  💡 *AI Suggestion:* _{ai_sugg}_")
+
+        market_rows.append([
+            now.strftime("%Y-%m-%d %H:%M:%S"),
+            sym,
+            item["price_str"],
+            item["high_str"],
+            item["low_str"],
+            f"{chg:+.2f}%",
+            "BULLISH" if chg >= 0 else "BEARISH",
+            "ACTIVE SCANNING",
+            ai_pick,
+            ai_sugg
+        ])
+
+        sym_chart = sym_chart_urls.get(sym, report_chart_url or "N/A")
+
+        # Also queue directly into dedicated "AI Trade Suggestions" Google Sheet tab!
+        queue_row(state, "AI Trade Suggestions", [
+            fmt_ts(now), sym, "LIVE SCAN (15m/1h/4h)", "OVERVIEW", round(price, 6),
+            ai_pick, f"24h change {chg:+.2f}%, Trend: {htf_summary or 'Neutral'}",
+            ai_sugg, "A" if "YES" in ai_pick else "B", 75, htf_summary or "RANGING",
+            round(price, 6), round(low, 6), round(high, 6), "2.0R",
+            f"24h High: ${high:,.2f}", f"Key Support: ${low:,.2f} | Key Resistance: ${high:,.2f}",
+            sym_chart
+        ])
+
+        # If any setups triggered, also log to Alerts tab
+        for s in sym_setups:
+            queue_row(state, "Alerts", [
+                fmt_ts(now), s.symbol, s.timeframe, s.direction, "Liquidity Sweep + OB Retest",
+                round(s.price, 6), round(s.sweep_level, 6), round(s.ob_low, 6),
+                round(s.ob_high, 6), round(s.entry, 6), round(s.stop, 6), round(s.target, 6),
+                s.confluence or "Standard",
+                ai_pick, "On-demand sweep detected", ai_sugg,
+                "A", 80, htf_summary or "RANGING",
+                round(s.entry, 6), round(s.stop, 6), round(s.target, 6), CFG.rr,
+                s.chart_url or sym_chart or "N/A"
+            ])
+
+    if mtf_trends:
+        lines.append("")
+        lines.append("🌐 *Multi-Timeframe Trend Matrix (EMA Structure):*")
+        lines.extend(mtf_trends)
+
+    lines.append("")
+    lines.append("🎯 *Active Setups / Signals:*")
+    if triggered:
+        for t in triggered:
+            lines.append(f"🚨 *{t}*")
+    else:
+        if is_activity_report:
+            lines.append(f"• Abhi koi live sweep trigger nahi hua hai across {', '.join(TIMEFRAMES)}. Market actively monitor ho rahi hai aur next optimal order block retest ka wait chal raha hai.")
+        else:
+            lines.append(f"• No active sweep trigger right now across {', '.join(TIMEFRAMES)}. Follow AI suggestions above.")
+
+    sheets_status = "Google Sheets Logging OFF"
+    if sheets:
+        try:
+            sheets.update_sheet1(market_rows)
+            queue_row(state, "Scan Log", [
+                fmt_ts(now), ", ".join(SYMBOLS),
+                " | ".join(prices_summary),
+                ", ".join(triggered) or "None",
+                "ACTIVITY REPORT" if is_activity_report else "TELEGRAM ON-DEMAND",
+            ])
+            flush_sheet_queue(state, sheets)
+            save_state(state)
+            sheets_status = "Google Sheet (Sheet1 & AI Trade Suggestions) Updated ✅"
+        except Exception as exc:
+            log.warning("On-demand sheet update failed: %s", exc)
+            sheets_status = "Google Sheet update failed"
+
+    if report_chart_url:
+        lines.append("")
+        lines.append(f"🖼️ *Live Candlestick Chart:* [View High-Res Chart Image]({report_chart_url})")
+
+    target_sym = "BTCUSDT" if "BTCUSDT" in SYMBOLS else SYMBOLS[0]
+    lines.append(f"📈 *Live TradingView Chart:* [Open {target_sym} on TradingView](https://www.tradingview.com/chart/?symbol=BINANCE:{target_sym})")
+
+    lines.append("")
+    sheet_url = get_sheet_link()
+    if sheet_url:
+        lines.append(f"📊 *Google Sheet:* [Open Live Sheet & Audit Log]({sheet_url})")
+    lines.append(f"📋 *Sheet Status:* {sheets_status}")
+    status_indicator = "🟢 Analysis Active 24/7 (Send 'end' to pause)" if SCANNING_ACTIVE.is_set() else "🛑 Analysis Paused (Send 'start' to resume)"
+    lines.append(f"🤖 *Status:* {status_indicator}")
+
+    if is_activity_report:
+        lines.append("")
+        lines.append("💡 *Quick Actions:*")
+        lines.append("• Send `end` - Analysis pause karne ke liye")
+        lines.append("• Send `start` - Analysis resume / live sync karne ke liye")
+        lines.append("• Send `/scan` - Instant sweep scan ke liye")
+
+    msg_text = "\n".join(lines)
+    send_telegram_chart_alert(msg_text, photo_url=report_chart_url, chat_id=chat_id, parse_mode="Markdown")
+
+
+def handle_telegram_charts(client: BinanceClient, chat_id: str, requested_sym: Optional[str] = None) -> None:
+    """
+    Generates and sends live institutional charts for all monitored symbols (or a requested symbol)
+    directly to Telegram, along with each symbol's:
+      - Exact Previous 1-Day Candle OHLC levels (PDH, PDL, PDO, PDC)
+      - Groq AI Trade Decision / Pick (YES/NO/BUY/WAIT)
+      - Actionable Groq AI Suggestion for Trade
+    """
+    targets = [requested_sym] if (requested_sym and requested_sym in SYMBOLS) else SYMBOLS
+    sym_count = len(targets)
+    if sym_count > 1:
+        send_telegram(
+            f"🖼️ *Sabhi {sym_count} symbols ke live charts, PD-OHLC levels aur Groq AI Trade Suggestions taiyar ho rahe hain... Ek pal rukhein!*",
+            chat_id=chat_id,
+            parse_mode="Markdown",
+        )
+    else:
+        send_telegram(
+            f"🖼️ *{targets[0]} ka live chart, PD-OHLC levels aur AI suggestion taiyar ho raha hai...*",
+            chat_id=chat_id,
+            parse_mode="Markdown",
+        )
+
+    # 1. Pre-fetch market data & daily levels to generate batch Groq AI suggestions
+    market_items = []
+    symbol_data = {}
+    for sym in targets:
+        if STOP.is_set():
+            break
+        try:
+            try:
+                data_24h = client._get("/api/v3/ticker/24hr", {"symbol": sym})
+                price = float(data_24h.get("lastPrice", 0))
+                high = float(data_24h.get("highPrice", 0))
+                low = float(data_24h.get("lowPrice", 0))
+                chg = float(data_24h.get("priceChangePercent", 0))
+            except Exception:
+                price = client.price(sym)
+                high, low, chg = price, price, 0.0
+
+            pdo, pdh, pdl, pdc = get_daily_levels(client, sym)
+            item = {
+                "symbol": sym,
+                "price": price,
+                "high": high,
+                "low": low,
+                "chg": chg,
+                "pdo": pdo,
+                "pdh": pdh,
+                "pdl": pdl,
+                "pdc": pdc,
+                "trend": "BULLISH" if chg >= 0 else "BEARISH",
+            }
+            market_items.append(item)
+            symbol_data[sym] = item
+        except Exception as exc:
+            log.warning("Could not pre-fetch data for %s: %s", sym, exc)
+
+    # 2. Generate Real AI Trade Picks & Suggestions via Groq batch analysis
+    ai_batch = generate_market_ai_suggestions_batch(market_items) if market_items else {}
+
+    # 3. Render and dispatch individual chart alerts
+    sent_count = 0
+    for sym in targets:
+        if STOP.is_set():
+            break
+        try:
+            item = symbol_data.get(sym)
+            if not item:
+                continue
+
+            price = item["price"]
+            high = item["high"]
+            low = item["low"]
+            chg = item["chg"]
+            pdo = item["pdo"]
+            pdh = item["pdh"]
+            pdl = item["pdl"]
+            pdc = item["pdc"]
+
+            price_str = f"${price:,.4f}" if price < 10 else f"${price:,.2f}"
+            high_str = f"${high:,.4f}" if high < 10 else f"${high:,.2f}"
+            low_str = f"${low:,.4f}" if low < 10 else f"${low:,.2f}"
+
+            # Fetch 15m candles
+            df = client.klines(sym, "15m", 65)
+            if df is None or len(df) < 10:
+                log.warning("Not enough candles to generate chart for %s", sym)
+                continue
+
+            # Generate high-precision institutional chart
+            chart_url = generate_and_upload_chart(
+                df,
+                symbol=sym,
+                timeframe="15m",
+                support=low,
+                resistance=high,
+                pdo=pdo,
+                pdh=pdh,
+                pdl=pdl,
+                pdc=pdc,
+            )
+
+            # AI trade decision and suggestion
+            ai_item = ai_batch.get(sym, {})
+            ai_pick = ai_item.get(
+                "trade_pick",
+                "BUY ON DIP (LONG)" if chg > 0.5 else "SELL ON RALLY (SHORT)" if chg < -0.5 else "WAIT / NEUTRAL"
+            )
+            ai_sugg = ai_item.get(
+                "ai_suggestion",
+                f"24h change {chg:+.2f}%. Monitor PDH ({fmt_price(pdh)}) and PDL ({fmt_price(pdl)}) for institutional liquidity grab."
+            )
+
+            chg_sign = "+" if chg >= 0 else ""
+            pdh_val = fmt_price(pdh) if pdh else "N/A"
+            pdl_val = fmt_price(pdl) if pdl else "N/A"
+            pdo_val = fmt_price(pdo) if pdo else "N/A"
+            pdc_val = fmt_price(pdc) if pdc else "N/A"
+
+            caption = (
+                f"📊 *{sym} Institutional Structure Chart (15m)*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💰 *Live Price:* `{price_str}` ({chg_sign}{chg:.2f}%)\n"
+                f"📈 *24h Range:* Low `{low_str}` ➔ High `{high_str}`\n\n"
+                f"📍 *Previous 1-Day Candle Levels (PD-OHLC):*\n"
+                f"• 🟠 *PDH (Prev Day High):* `{pdh_val}`\n"
+                f"• 🔵 *PDL (Prev Day Low):* `{pdl_val}`\n"
+                f"• 🟣 *PDO (Prev Day Open):* `{pdo_val}`\n"
+                f"• 🟡 *PDC (Prev Day Close):* `{pdc_val}`\n\n"
+                f"🤖 *AI Trade Pick:* `{ai_pick}`\n"
+                f"💡 *AI Suggestion for Trade:* _{ai_sugg}_\n\n"
+                f"🌐 *Overlays:* EMA 20 (Blue) | EMA 50 (Orange)\n"
+                f"🔗 [Open Live Chart on TradingView](https://www.tradingview.com/chart/?symbol=BINANCE:{sym})"
+            )
+
+            send_telegram_chart_alert(caption, photo_url=chart_url, chat_id=chat_id, parse_mode="Markdown")
+            sent_count += 1
+            STOP.wait(0.7)  # Gentle pacing to respect Telegram rate limits
+        except Exception as exc:
+            log.warning("Failed to generate/send chart for %s: %s", sym, exc)
+
+    if sym_count > 1 and sent_count > 0:
+        send_telegram(
+            f"✅ *Sabhi {sent_count} symbols ke charts, PD-OHLC levels aur AI Suggestions deliver ho gaye hain!*",
+            chat_id=chat_id,
+            parse_mode="Markdown",
+        )
+
+
+def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict) -> None:
+    if not TELEGRAM_TOKEN:
+        return
+    offset = 0
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"limit": 1}, timeout=10)
+        data = r.json()
+        if data.get("ok") and data.get("result"):
+            offset = data["result"][-1]["update_id"] + 1
+    except Exception:
+        pass
+
+    log.info("Telegram command listener active (listening for /start, start, /scan, /status)...")
+
+    while not STOP.is_set():
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            resp = requests.get(url, params={"offset": offset, "timeout": 10}, timeout=20)
+            if resp.status_code != 200:
+                STOP.wait(3)
+                continue
+            res = resp.json()
+            if not res.get("ok"):
+                STOP.wait(3)
+                continue
+
+            for update in res.get("result", []):
+                offset = max(offset, update["update_id"] + 1)
+                msg = update.get("message") or update.get("edited_message")
+                if not msg:
+                    continue
+                chat = msg.get("chat", {})
+                chat_id = str(chat.get("id"))
+                text = (msg.get("text") or "").strip()
+                if not text:
+                    continue
+
+                log.info("Telegram command received from %s: '%s'", chat_id, text)
+                clean_lower = text.lower().strip()
+                cmd = clean_lower.split()[0] if clean_lower else ""
+
+                is_chart_cmd = (
+                    cmd in ("/chart", "chart", "/charts", "charts", "/image", "image", "/images", "images", "/photo", "photo")
+                    or "chart image" in clean_lower
+                    or "chart images" in clean_lower
+                    or "send chart" in clean_lower
+                    or "send image" in clean_lower
+                    or "chart bhejo" in clean_lower
+                    or "image bhejo" in clean_lower
+                    or "bhejo chart" in clean_lower
+                    or "bhejo image" in clean_lower
+                    or "all charts" in clean_lower
+                    or "har chart" in clean_lower
+                    or "chart pic" in clean_lower
+                )
+
+                requested_chart_sym = None
+                words = [w.strip(",.!?#/@") for w in clean_lower.split()]
+                for s in SYMBOLS:
+                    base = s.replace("USDT", "").lower()
+                    if base in words or s.lower() in words:
+                        requested_chart_sym = s
+                        break
+
+                is_activity_cmd = (
+                    cmd in ("/activity", "activity", "/report", "report", "/what", "what")
+                    or "what are doing" in clean_lower
+                    or "what are you doing" in clean_lower
+                    or "what doing" in clean_lower
+                    or "what u doing" in clean_lower
+                    or "what r u doing" in clean_lower
+                    or "kya kar rahe" in clean_lower
+                    or "kya kar rhe" in clean_lower
+                    or "kya kr rahe" in clean_lower
+                    or "kya kr rhe" in clean_lower
+                    or "kya kar rha" in clean_lower
+                    or "kya kr rha" in clean_lower
+                    or "kya chal raha" in clean_lower
+                    or "kya chal rha" in clean_lower
+                    or "kya ho raha" in clean_lower
+                    or "whats going on" in clean_lower
+                    or "what's going on" in clean_lower
+                    or "analysis report" in clean_lower
+                )
+
+                is_stop_cmd = (
+                    cmd in ("/end", "end", "/stop", "stop", "/pause", "pause", "/band", "band", "/close", "close")
+                    or "analysis band" in clean_lower
+                    or "band kar" in clean_lower
+                    or "stop analysis" in clean_lower
+                    or "end analysis" in clean_lower
+                )
+
+                is_start_cmd = (
+                    cmd in ("/start", "start", "/resume", "resume", "/scan", "scan", "/data", "data", "/price", "price")
+                    or "analysis shuru" in clean_lower
+                    or "start analysis" in clean_lower
+                    or "resume analysis" in clean_lower
+                    or "shuru kar" in clean_lower
+                )
+
+                is_status_cmd = (
+                    cmd in ("/status", "status")
+                    or "bot status" in clean_lower
+                )
+
+                is_exit_cmd = (
+                    cmd in ("/exit", "exit", "/shutdown", "shutdown", "/kill", "kill")
+                )
+
+                is_help_cmd = (
+                    cmd in ("/help", "help")
+                )
+
+                if is_chart_cmd:
+                    log.info("Chart images requested by %s ('%s'), requested_sym=%s", chat_id, text, requested_chart_sym)
+                    handle_telegram_charts(client, chat_id, requested_sym=requested_chart_sym)
+                elif is_activity_cmd:
+                    log.info("Activity / 'What are you doing' report requested by %s ('%s')", chat_id, text)
+                    handle_telegram_start(client, sheets, state, chat_id, is_activity_report=True)
+                elif is_stop_cmd:
+                    if SCANNING_ACTIVE.is_set():
+                        SCANNING_ACTIVE.clear()
+                        log.info("Analysis PAUSED via Telegram command by %s ('%s')", chat_id, text)
+                        sheet_url = get_sheet_link()
+                        sheet_line = f"• 📊 [Open Live Google Sheet]({sheet_url})\n" if sheet_url else ""
+                        msg_end = (
+                            "🛑 *Market Analysis Band Kar Diya Gaya Hai (Paused)*\n\n"
+                            "• 24/7 background scanning aur Groq AI analysis stop kar di gayi hai.\n"
+                            "• Naye trades/setups ke alerts aana band ho gaye hain.\n"
+                            f"{sheet_line}\n"
+                            "👉 Analysis wapas shuru karne ke liye *start* ya */start* send karein."
+                        )
+                        send_telegram(msg_end, chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram(
+                            "ℹ️ *Analysis pehle se hi band hai.*\n\n👉 Shuru karne ke liye *start* ya */start* send karein.",
+                            chat_id=chat_id,
+                            parse_mode="Markdown",
+                        )
+                elif is_start_cmd:
+                    was_paused = not SCANNING_ACTIVE.is_set()
+                    if was_paused:
+                        SCANNING_ACTIVE.set()
+                        log.info("Analysis RESUMED via Telegram command by %s ('%s')", chat_id, text)
+                        send_telegram(
+                            "▶️ *Market Analysis Shuru / Resumed!*\n\n"
+                            "• 24/7 scanning aur AI analysis active ho gayi hai.\n"
+                            "• Naye setups monitor honge aur alerts aayenge.\n\n"
+                            "⏳ *Live market data fetch ho raha hai...*",
+                            chat_id=chat_id,
+                            parse_mode="Markdown",
+                        )
+                    handle_telegram_start(client, sheets, state, chat_id)
+                elif is_status_cmd:
+                    status_str = "🟢 ACTIVE (Scanning 24/7)" if SCANNING_ACTIVE.is_set() else "🛑 PAUSED (Band)"
+                    sheet_url = get_sheet_link()
+                    sheet_line = f"• 📊 [Open Live Google Sheet]({sheet_url})\n" if sheet_url else ""
+                    status_msg = (
+                        f"🤖 *Bot Status:* {status_str}\n\n"
+                        f"• *Pairs:* {', '.join(SYMBOLS)}\n"
+                        f"• *Timeframes:* {', '.join(TIMEFRAMES)}\n"
+                        f"• *Scan Cycle:* {SCAN_INTERVAL}s\n"
+                        f"• *Groq AI Model:* `{GROQ_MODEL}`\n"
+                        f"{sheet_line}\n"
+                        "💡 *Commands:*\n"
+                        "• `chart image` ya `/charts` - Sabhi charts + PD-OHLC levels\n"
+                        "• `what are doing` ya `kya kar rahe ho` - Analysis report\n"
+                        "• `end` ya `/end` - Analysis band karein\n"
+                        "• `start` ya `/start` - Analysis shuru karein\n"
+                        "• `/status` - Bot status dekhein"
+                    )
+                    send_telegram(status_msg, chat_id=chat_id, parse_mode="Markdown")
+                elif is_exit_cmd:
+                    send_telegram("🛑 *Bot process ko completely stop (shutdown) kiya ja raha hai...*", chat_id=chat_id, parse_mode="Markdown")
+                    log.info("Complete shutdown triggered via Telegram command by %s", chat_id)
+                    SCANNING_ACTIVE.clear()
+                    STOP.set()
+                elif is_help_cmd:
+                    status_str = "🟢 ACTIVE" if SCANNING_ACTIVE.is_set() else "🛑 PAUSED"
+                    sheet_url = get_sheet_link()
+                    sheet_line = f"• 📊 [Open Live Google Sheet]({sheet_url})\n" if sheet_url else ""
+                    help_msg = (
+                        "🤖 *Crypto Trading Bot Commands:*\n\n"
+                        "• `chart image` ya `/charts` - *Har symbol ka chart image + PDH, PDL, PDO, PDC*\n"
+                        "• `chart <coin>` (e.g. `chart btc`, `chart eth`) - *Single coin chart image*\n"
+                        "• `what are doing` ya `kya kar rahe ho` - *Bot Activity & Analysis Report*\n"
+                        "• `end` ya `/end` - *Analysis band karein* (Pause 24/7 scan & AI alerts)\n"
+                        "• `start` ya `/start` - *Analysis shuru karein* (Resume scan & get live data)\n"
+                        "• `/scan` ya `scan` - Instant sweep & OB scan\n"
+                        "• `/status` - Current bot state\n"
+                        "• `/exit` - Bot process completely shutdown karein\n"
+                        f"{sheet_line}\n"
+                        f"Current State: {status_str}"
+                    )
+                    send_telegram(help_msg, chat_id=chat_id, parse_mode="Markdown")
+        except Exception as exc:
+            log.warning("Telegram listener error: %s", scrub(exc))
+            STOP.wait(3)
+
+
+# =============================================================================
 # ENTRY POINTS
 # =============================================================================
 SHEETS_ON = False
@@ -731,13 +2376,55 @@ def run_test() -> int:
 
     print("3) Google Sheets ...")
     if not sheets_enabled():
-        print("   SKIPPED/DISABLED (need: pip install gspread, credentials.json, GOOGLE_SHEET_ID or NAME)")
+        print("   SKIPPED/DISABLED (need: pip install gspread, credentials.json or GOOGLE_CREDENTIALS_JSON, GOOGLE_SHEET_ID or NAME)")
     else:
         try:
+            auth_source = ".env secret (GOOGLE_CREDENTIALS_JSON)" if GOOGLE_CREDENTIALS_JSON else f"file ({GOOGLE_CREDENTIALS_FILE})"
             SheetsLogger().append("Scan Log", [fmt_ts(datetime.now(LOCAL_TZ)), "TEST", "-", "None", "TEST ROW"])
-            print("   OK - a TEST row was added to the 'Scan Log' tab")
+            print(f"   OK - connected and appended to 'Scan Log' via {auth_source}")
         except Exception as exc:
             print(f"   FAILED: {exc}")
+
+    print("4) Groq AI API ...")
+    if not GROQ_API_KEY:
+        print("   SKIPPED/DISABLED (need: GROQ_API_KEY in .env)")
+    else:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            h = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+            p = {
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are a crypto quantitative analyst. Reply in JSON: {\"status\": \"READY\", \"model\": \"qwen\"}"},
+                    {"role": "user", "content": "Ping test."}
+                ],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 40
+            }
+            r = requests.post(url, headers=h, json=p, timeout=REQUEST_TIMEOUT)
+            if r.status_code == 200:
+                resp_json = r.json()
+                content = resp_json["choices"][0]["message"]["content"].strip()
+                print(f"   OK - Model '{GROQ_MODEL}' connected successfully (JSON mode: {content})")
+            else:
+                print(f"   FAILED (HTTP {r.status_code}: {r.text})")
+        except Exception as exc:
+            print(f"   FAILED: {exc}")
+
+    print("5) Cloudinary & mplfinance ...")
+    if not mpf:
+        print("   SKIPPED/DISABLED: mplfinance not installed")
+    else:
+        print("   OK - mplfinance loaded successfully")
+
+    if not cloudinary_configured():
+        print("   SKIPPED/DISABLED (need: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET in .env)")
+    else:
+        try:
+            ping_res = cloudinary.api.ping()
+            print(f"   OK - Cloudinary connected successfully (status: {ping_res.get('status', 'OK')})")
+        except Exception as exc:
+            print(f"   WARNING (Cloudinary ping failed: {exc})")
     return 0
 
 
@@ -762,14 +2449,31 @@ def main() -> int:
     sheets = SheetsLogger() if SHEETS_ON else None
     health = {"fails": 0, "notified": False}
 
-    log.info("Starting | symbols=%s | tf=%s | interval=%ss | telegram=%s | sheets=%s | tz=%s",
+    log.info("Starting | symbols=%s | timeframes=%s | interval=%ss | telegram=%s | sheets=%s | tz=%s",
              ",".join(SYMBOLS), TIMEFRAME, SCAN_INTERVAL, telegram_configured(), SHEETS_ON, TZ_NAME)
     if not SHEETS_ON:
         log.info("Google Sheets logging is OFF (missing gspread, credentials file, or sheet id/name).")
     if SEND_STARTUP_MESSAGE and telegram_configured() and not args.once:
-        send_telegram(f"🤖 trader_bot started. Watching {', '.join(SYMBOLS)} on {TIMEFRAME}.")
+        sheet_url = get_sheet_link()
+        sheet_text = f"\n📊 *Google Sheet:* [Open Live Sheet]({sheet_url})" if sheet_url else ""
+        send_telegram(f"🤖 *trader_bot started.* Watching {', '.join(SYMBOLS)} on {TIMEFRAME} ({SCAN_INTERVAL}s scan cycle).{sheet_text}", parse_mode="Markdown")
+
+    if TELEGRAM_TOKEN and not args.once:
+        t_listener = threading.Thread(
+            target=telegram_listener_loop,
+            args=(client, sheets, state),
+            name="TelegramListener",
+            daemon=True,
+        )
+        t_listener.start()
 
     while not STOP.is_set():                       # 24/7 loop
+        if not SCANNING_ACTIVE.is_set():
+            # Analysis is paused by user ('end' command)
+            # Sleep lightly so we stay responsive to STOP or start
+            STOP.wait(2.0)
+            continue
+
         started = time.time()
         try:
             run_cycle(client, sheets, state, health)

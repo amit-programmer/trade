@@ -4,3 +4,7 @@ numpy>=1.24
 gspread>=6.0
 google-auth>=2.20
 python-dotenv>=1.0
+groq>=0.9.0
+mplfinance>=0.12.10b0
+cloudinary>=1.46.0
+matplotlib>=3.7.0
