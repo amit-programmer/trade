@@ -2663,19 +2663,29 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
         return
     offset = 0
     try:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"limit": 1}, timeout=10)
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"limit": 100}, timeout=10)
         data = r.json()
         if data.get("ok") and data.get("result"):
-            offset = data["result"][-1]["update_id"] + 1
+            now_ts = time.time()
+            for u in data["result"]:
+                m = u.get("message") or u.get("channel_post") or u.get("edited_message")
+                m_date = m.get("date", 0) if m else 0
+                if (now_ts - m_date) > 180:
+                    offset = max(offset, u["update_id"] + 1)
     except Exception:
         pass
 
-    log.info("Telegram command listener active (listening for /start, start, /scan, /status)...")
+    log.info("Telegram command listener active (listening for /ai, @ai, @tado, /charts, /scan, /status)...")
 
     while not STOP.is_set():
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            resp = requests.get(url, params={"offset": offset, "timeout": 10}, timeout=20)
+            params = {
+                "offset": offset,
+                "timeout": 10,
+                "allowed_updates": json.dumps(["message", "edited_message", "channel_post", "edited_channel_post", "my_chat_member", "chat_member"]),
+            }
+            resp = requests.get(url, params=params, timeout=20)
             if resp.status_code != 200:
                 STOP.wait(3)
                 continue
@@ -2686,7 +2696,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
 
             for update in res.get("result", []):
                 offset = max(offset, update["update_id"] + 1)
-                msg = update.get("message") or update.get("edited_message")
+                msg = update.get("message") or update.get("edited_message") or update.get("channel_post") or update.get("edited_channel_post")
                 if not msg:
                     continue
                 chat = msg.get("chat", {})
@@ -2694,8 +2704,8 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 chat_type = chat.get("type", "private")  # "private", "group", "supergroup", "channel"
                 chat_title = chat.get("title") or "Trading Community"
                 user = msg.get("from", {})
-                user_id = user.get("id")
-                user_name = user.get("first_name") or user.get("username") or "Trader"
+                user_id = user.get("id") or (int(chat_id) if chat_id.lstrip("-").isdigit() else None)
+                user_name = user.get("first_name") or user.get("username") or chat_title or "Trader"
                 message_id = msg.get("message_id")
 
                 # --- 1. WELCOME NEW MEMBERS ---
