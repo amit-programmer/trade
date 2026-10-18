@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  trader-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto_trader_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist state and logs across container updates and restarts
+      - ./bot_state.json:/app/bot_state.json
+      - ./trader_bot.log:/app/trader_bot.log
+      # Uncomment if using credentials.json instead of GOOGLE_CREDENTIALS_JSON in .env:
+      # - ./credentials.json:/app/credentials.json:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

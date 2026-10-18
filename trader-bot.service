@@ -1,0 +1,22 @@
+[Unit]
+Description=Crypto Liquidity Sweep & SMC AI Trading Bot
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Change WorkingDirectory and Python path to your project folder on the VPS:
+WorkingDirectory=/root/trade
+ExecStart=/root/trade/venv/bin/python trader_bot.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/root/trade/.env
+
+# Logging and security
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trader_bot
+
+[Install]
+WantedBy=multi-user.target
