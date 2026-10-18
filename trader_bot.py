@@ -552,16 +552,16 @@ def telegram_configured() -> bool:
     return bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
 
-def send_telegram(
+def send_telegram_msg(
     text: str,
     chat_id: Optional[str] = None,
     parse_mode: Optional[str] = None,
     reply_to_message_id: Optional[int] = None,
-) -> bool:
+) -> Optional[dict]:
     target_chat = chat_id or TELEGRAM_CHAT_ID
     if not (TELEGRAM_TOKEN and target_chat):
         log.warning("Telegram not configured (missing TELEGRAM_BOT_TOKEN or chat_id).")
-        return False
+        return None
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload: Dict[str, Any] = {"chat_id": target_chat, "text": text, "disable_web_page_preview": True}
     if parse_mode:
@@ -581,11 +581,23 @@ def send_telegram(
                 STOP.wait(min(wait, 60))
                 continue
             resp.raise_for_status()
-            return True
+            res = resp.json()
+            if res.get("ok"):
+                return res.get("result")
+            return None
         except requests.RequestException as exc:
             log.warning("Telegram send failed (attempt %d/3): %s", attempt + 1, scrub(exc))
             STOP.wait(2 ** attempt)
-    return False
+    return None
+
+
+def send_telegram(
+    text: str,
+    chat_id: Optional[str] = None,
+    parse_mode: Optional[str] = None,
+    reply_to_message_id: Optional[int] = None,
+) -> bool:
+    return bool(send_telegram_msg(text, chat_id=chat_id, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id))
 
 
 def send_telegram_chart_alert(
@@ -819,6 +831,139 @@ def telegram_set_description(chat_id: str, description: str) -> bool:
     except Exception as exc:
         log.warning("setChatDescription error: %s", scrub(exc))
         return False
+
+
+def telegram_edit_message(chat_id: str, message_id: int, text: str, parse_mode: Optional[str] = "Markdown") -> bool:
+    """Edits a previously posted message (requires edit message permission)."""
+    if not (TELEGRAM_TOKEN and chat_id and message_id and text):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+        payload: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        resp = requests.post(url, json=payload, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("editMessage error: %s", scrub(exc))
+        return False
+
+
+def telegram_delete_messages(chat_id: str, message_ids: List[int]) -> bool:
+    """Deletes multiple messages in bulk (requires delete message permission)."""
+    if not (TELEGRAM_TOKEN and chat_id and message_ids):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessages"
+        resp = requests.post(url, json={"chat_id": chat_id, "message_ids": message_ids}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("deleteMessages error: %s", scrub(exc))
+        return False
+
+
+def telegram_unmute_member(chat_id: str, user_id: int) -> bool:
+    """Unmutes a restricted user in the group."""
+    if not (TELEGRAM_TOKEN and chat_id and user_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/restrictChatMember"
+        payload = {
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "permissions": {
+                "can_send_messages": True,
+                "can_send_media_messages": True,
+                "can_send_other_messages": True,
+                "can_add_web_page_previews": True,
+            },
+        }
+        resp = requests.post(url, json=payload, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("unmute member error: %s", scrub(exc))
+        return False
+
+
+def telegram_send_dm(user_id: int, text: str, parse_mode: Optional[str] = "Markdown") -> bool:
+    """Sends a direct private message to a specific user (requires direct messages capability)."""
+    return send_telegram(text, chat_id=str(user_id), parse_mode=parse_mode)
+
+
+def telegram_delete_chat_photo(chat_id: str) -> bool:
+    """Deletes the group/channel avatar (requires change channel info permission)."""
+    if not (TELEGRAM_TOKEN and chat_id):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteChatPhoto"
+        resp = requests.post(url, json={"chat_id": chat_id}, timeout=10)
+        return bool(resp.status_code == 200 and resp.json().get("ok"))
+    except Exception as exc:
+        log.warning("deleteChatPhoto error: %s", scrub(exc))
+        return False
+
+
+def telegram_kick_member(chat_id: str, user_id: int) -> bool:
+    """Kicks a user from the group (bans and immediately unbans)."""
+    if not (TELEGRAM_TOKEN and chat_id and user_id):
+        return False
+    ok_ban = telegram_ban_member(chat_id, user_id)
+    if ok_ban:
+        telegram_unban_member(chat_id, user_id)
+        return True
+    return False
+
+
+def telegram_get_chat(chat_id: str) -> Optional[dict]:
+    """Fetches chat information from Telegram API."""
+    if not (TELEGRAM_TOKEN and chat_id):
+        return None
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChat"
+        resp = requests.get(url, params={"chat_id": chat_id}, timeout=10)
+        if resp.status_code == 200 and resp.json().get("ok"):
+            return resp.json().get("result")
+    except Exception as exc:
+        log.warning("getChat error: %s", scrub(exc))
+    return None
+
+
+def telegram_get_member_count(chat_id: str) -> Optional[int]:
+    """Gets total member count of the chat."""
+    if not (TELEGRAM_TOKEN and chat_id):
+        return None
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getChatMemberCount"
+        resp = requests.get(url, params={"chat_id": chat_id}, timeout=10)
+        if resp.status_code == 200 and resp.json().get("ok"):
+            return resp.json().get("result")
+    except Exception as exc:
+        log.warning("getChatMemberCount error: %s", scrub(exc))
+    return None
+
+
+def parse_duration_sec(arg: str, default_sec: int = 3600) -> int:
+    """Parses human-friendly durations like 30m, 2h, 1d into seconds."""
+    arg = (arg or "").strip().lower()
+    if not arg:
+        return default_sec
+    try:
+        if arg.endswith("m"):
+            return max(60, int(float(arg[:-1]) * 60))
+        elif arg.endswith("h"):
+            return max(60, int(float(arg[:-1]) * 3600))
+        elif arg.endswith("d"):
+            return max(60, int(float(arg[:-1]) * 86400))
+        elif arg.isdigit():
+            return max(60, int(arg))
+    except Exception:
+        pass
+    return default_sec
 
 
 def is_telegram_admin(chat_id: str, user_id: Optional[int]) -> bool:
@@ -1624,7 +1769,15 @@ def new_stats() -> dict:
 
 
 def load_state() -> dict:
-    default = {"alerted": {}, "day": "", "stats": new_stats(), "sheet_queue": []}
+    default = {
+        "alerted": {},
+        "day": "",
+        "stats": new_stats(),
+        "sheet_queue": [],
+        "custom_welcome": "",
+        "stories": {},
+        "active_stream": {},
+    }
     try:
         if STATE_FILE.exists():
             data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -2564,16 +2717,26 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         else:
                             # A new member joined the group
                             m_name = m.get("first_name") or m.get("username") or "Trader"
-                            welcome_msg = (
-                                f"👋 *Welcome to {chat_title}, {m_name}!*\n\n"
-                                f"📈 *Yahan aapko live institutional crypto market alerts aur AI analysis milega.*\n\n"
-                                f"💡 *Quick Start Commands:*\n"
-                                f"• `/charts` - Sabhi coins ke live charts + PDH/PDL levels\n"
-                                f"• `/scan` - Instant sweep aur Order Block scan\n"
-                                f"• `/ask <question>` - Groq AI se koi bhi trading question puchein\n"
-                                f"• `/rules` - Group guidelines & risk management rules\n\n"
-                                f"⚠️ *Note:* Spamming, unauthorized links, ya direct promotions strictly prohibited hain."
-                            )
+                            m_username = f"@{m.get('username')}" if m.get("username") else m_name
+                            custom_w = state.get("custom_welcome")
+                            if custom_w:
+                                welcome_msg = (
+                                    custom_w
+                                    .replace("{name}", m_name)
+                                    .replace("{user}", m_username)
+                                    .replace("{chat_title}", chat_title)
+                                )
+                            else:
+                                welcome_msg = (
+                                    f"👋 *Welcome to {chat_title}, {m_name}!*\n\n"
+                                    f"📈 *Yahan aapko live institutional crypto market alerts aur AI analysis milega.*\n\n"
+                                    f"💡 *Quick Start Commands:*\n"
+                                    f"• `/charts` - Sabhi coins ke live charts + PDH/PDL levels\n"
+                                    f"• `/scan` - Instant sweep aur Order Block scan\n"
+                                    f"• `/ask <question>` - Groq AI se koi bhi trading question puchein\n"
+                                    f"• `/rules` - Group guidelines & risk management rules\n\n"
+                                    f"⚠️ *Note:* Spamming, unauthorized links, ya direct promotions strictly prohibited hain."
+                                )
                             send_telegram(welcome_msg, chat_id=chat_id, parse_mode="Markdown")
                     continue
 
@@ -2607,90 +2770,9 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 reply_to_msg = msg.get("reply_to_message")
                 is_reply_to_bot = bool(reply_to_msg and reply_to_msg.get("from", {}).get("id") == bot_info.get("id"))
 
-                # --- 3. GROUP MODERATION & ADMIN COMMANDS ---
-                if cmd in ("/del", "del", "/delete", "delete"):
-                    if is_telegram_admin(chat_id, user_id):
-                        if reply_to_msg:
-                            telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
-                            telegram_delete_message(chat_id, message_id)
-                        else:
-                            send_telegram("ℹ️ Kisi message ko delete karne ke liye us message ko reply karke `/del` likhein.", chat_id=chat_id)
-                    else:
-                        send_telegram("❌ Sirf group administrators hi `/del` command use kar sakte hain.", chat_id=chat_id)
-                    continue
+                # --- 3. GROUP MODERATION & ADMIN COMMANDS (7 PERMISSIONS) ---
 
-                if cmd in ("/ban", "ban"):
-                    if is_telegram_admin(chat_id, user_id):
-                        target_user = reply_to_msg.get("from", {}) if reply_to_msg else None
-                        target_id = target_user.get("id") if target_user else None
-                        if target_id:
-                            if telegram_ban_member(chat_id, target_id):
-                                t_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
-                                send_telegram(f"🚫 *User {t_name} ko group se ban kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
-                                if reply_to_msg:
-                                    telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
-                            else:
-                                send_telegram("❌ User ko ban karne me error aayi. Please bot permissions verify karein.", chat_id=chat_id)
-                        else:
-                            send_telegram("ℹ️ Kisi user ko ban karne ke liye uske message ko reply karke `/ban` send karein.", chat_id=chat_id)
-                    else:
-                        send_telegram("❌ Sirf group administrators hi `/ban` command use kar sakte hain.", chat_id=chat_id)
-                    continue
-
-                if cmd in ("/unban", "unban"):
-                    if is_telegram_admin(chat_id, user_id):
-                        target_user = reply_to_msg.get("from", {}) if reply_to_msg else None
-                        target_id = target_user.get("id") if target_user else None
-                        if target_id:
-                            if telegram_unban_member(chat_id, target_id):
-                                t_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
-                                send_telegram(f"✅ *User {t_name} unban ho gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
-                            else:
-                                send_telegram("❌ User ko unban karne me error aayi.", chat_id=chat_id)
-                        else:
-                            send_telegram("ℹ️ Unban karne ke liye user ke message ko reply karke `/unban` send karein.", chat_id=chat_id)
-                    else:
-                        send_telegram("❌ Sirf group administrators hi `/unban` command use kar sakte hain.", chat_id=chat_id)
-                    continue
-
-                if cmd in ("/mute", "mute", "/restrict", "restrict"):
-                    if is_telegram_admin(chat_id, user_id):
-                        target_user = reply_to_msg.get("from", {}) if reply_to_msg else None
-                        target_id = target_user.get("id") if target_user else None
-                        if target_id:
-                            if telegram_mute_member(chat_id, target_id, duration_sec=3600):
-                                t_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
-                                send_telegram(f"🔇 *User {t_name} ko 1 hour ke liye mute kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
-                            else:
-                                send_telegram("❌ User ko mute karne me error aayi.", chat_id=chat_id)
-                        else:
-                            send_telegram("ℹ️ Mute karne ke liye user ke message ko reply karke `/mute` send karein.", chat_id=chat_id)
-                    else:
-                        send_telegram("❌ Sirf group administrators hi `/mute` command use kar sakte hain.", chat_id=chat_id)
-                    continue
-
-                if cmd in ("/pin", "pin"):
-                    if is_telegram_admin(chat_id, user_id):
-                        if reply_to_msg:
-                            if telegram_pin_message(chat_id, reply_to_msg.get("message_id")):
-                                send_telegram("📌 *Message successfully pin kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
-                            else:
-                                send_telegram("❌ Pin karne me error aayi. Please bot permissions check karein.", chat_id=chat_id)
-                        else:
-                            send_telegram("ℹ️ Kisi message ko pin karne ke liye us message ko reply karke `/pin` likhein.", chat_id=chat_id)
-                    else:
-                        send_telegram("❌ Sirf group administrators hi `/pin` command use kar sakte hain.", chat_id=chat_id)
-                    continue
-
-                if cmd in ("/unpin", "unpin"):
-                    if is_telegram_admin(chat_id, user_id):
-                        r_mid = reply_to_msg.get("message_id") if reply_to_msg else None
-                        telegram_unpin_message(chat_id, r_mid)
-                        send_telegram("📌 *Message unpin kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
-                    else:
-                        send_telegram("❌ Sirf group administrators hi `/unpin` command use kar sakte hain.", chat_id=chat_id)
-                    continue
-
+                # Permission 1: Change Channel Info
                 if cmd in ("/settitle", "settitle"):
                     if is_telegram_admin(chat_id, user_id):
                         new_t = text[len(first_word):].strip()
@@ -2698,7 +2780,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                             if telegram_set_title(chat_id, new_t):
                                 send_telegram(f"✅ *Group title updated to:* `{new_t}`", chat_id=chat_id, parse_mode="Markdown")
                             else:
-                                send_telegram("❌ Title change karne me error aayi.", chat_id=chat_id)
+                                send_telegram("❌ Title change karne me error aayi. Please bot permissions check karein.", chat_id=chat_id)
                         else:
                             send_telegram("ℹ️ Usage: `/settitle <Naya Title>`", chat_id=chat_id, parse_mode="Markdown")
                     else:
@@ -2712,13 +2794,51 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                             if telegram_set_description(chat_id, new_d):
                                 send_telegram("✅ *Group description successfully updated!*", chat_id=chat_id, parse_mode="Markdown")
                             else:
-                                send_telegram("❌ Description change karne me error aayi.", chat_id=chat_id)
+                                send_telegram("❌ Description change karne me error aayi. Please bot permissions check karein.", chat_id=chat_id)
                         else:
                             send_telegram("ℹ️ Usage: `/setdesc <Naya Description>`", chat_id=chat_id, parse_mode="Markdown")
                     else:
                         send_telegram("❌ Sirf group administrators hi description change kar sakte hain.", chat_id=chat_id)
                     continue
 
+                if cmd in ("/delphoto", "delphoto", "/deletephoto", "deletephoto"):
+                    if is_telegram_admin(chat_id, user_id):
+                        if telegram_delete_chat_photo(chat_id):
+                            send_telegram("✅ *Group/Channel photo successfully removed.*", chat_id=chat_id, parse_mode="Markdown")
+                        else:
+                            send_telegram("❌ Photo delete karne me error aayi. Please bot permissions verify karein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi chat photo delete kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/channelinfo", "channelinfo", "/chatinfo", "chatinfo"):
+                    chat_info = telegram_get_chat(chat_id)
+                    member_cnt = telegram_get_member_count(chat_id)
+                    c_title = chat_info.get("title", chat_title) if chat_info else chat_title
+                    c_desc = chat_info.get("description", "None") if chat_info else "None"
+                    c_type = chat_info.get("type", chat_type) if chat_info else chat_type
+                    cnt_str = f"{member_cnt:,}" if member_cnt else "N/A"
+                    info_msg = (
+                        f"📋 *Channel / Group Information:*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"• *Title:* {c_title}\n"
+                        f"• *Type:* `{c_type}`\n"
+                        f"• *Chat ID:* `{chat_id}`\n"
+                        f"• *Total Members:* {cnt_str}\n"
+                        f"• *Description:* {c_desc}\n\n"
+                        f"🛡️ *Configured Bot Permissions Status:*\n"
+                        f"  ✅ *Change Channel Info* (`/settitle`, `/setdesc`, `/delphoto`)\n"
+                        f"  ✅ *Manage Messages* (Post `/announce`, Edit `/edit`, Delete `/del`, `/purge`)\n"
+                        f"  ✅ *Manage Stories* (Post `/story`, Edit `/editstory`, Delete `/delstory`)\n"
+                        f"  ✅ *Manage Direct Messages* (`/dm`, `/dmme`, 1-on-1 AI Assistant)\n"
+                        f"  ✅ *Send Welcome Messages* (Auto-greeting + `/setwelcome`)\n"
+                        f"  ✅ *Manage Live Streams* (`/livestream`, `/endstream`, `/streamschedule`)\n"
+                        f"  ✅ *Ban Users* (`/ban`, `/unban`, `/kick`, `/mute`, `/unmute`)"
+                    )
+                    send_telegram(info_msg, chat_id=chat_id, parse_mode="Markdown")
+                    continue
+
+                # Permission 2: Manage Messages (Post, Edit, Delete)
                 if cmd in ("/announce", "announce", "/broadcast", "broadcast"):
                     if is_telegram_admin(chat_id, user_id):
                         ann_text = text[len(first_word):].strip()
@@ -2737,13 +2857,507 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         send_telegram("❌ Sirf administrators announcement bhej sakte hain.", chat_id=chat_id)
                     continue
 
+                if cmd in ("/post", "post", "/say", "say"):
+                    if is_telegram_admin(chat_id, user_id):
+                        raw_msg = text[len(first_word):].strip()
+                        if raw_msg:
+                            telegram_delete_message(chat_id, message_id)
+                            send_telegram(raw_msg, chat_id=chat_id, parse_mode="Markdown")
+                        else:
+                            send_telegram("ℹ️ Usage: `/post <Aapka message>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi `/post` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/edit", "edit"):
+                    if is_telegram_admin(chat_id, user_id):
+                        if reply_to_msg:
+                            new_text = text[len(first_word):].strip()
+                            if new_text:
+                                target_mid = reply_to_msg.get("message_id")
+                                if telegram_edit_message(chat_id, target_mid, new_text):
+                                    telegram_delete_message(chat_id, message_id)
+                                else:
+                                    send_telegram("❌ Message edit nahi ho saka. (Note: Bot sirf apne messages edit kar sakta hai).", chat_id=chat_id)
+                            else:
+                                send_telegram("ℹ️ Usage: Kisi message ko reply karke `/edit <Naya Text>` likhein.", chat_id=chat_id, parse_mode="Markdown")
+                        else:
+                            send_telegram("ℹ️ Jis message ko edit karna hai, usko reply karke `/edit <Naya Text>` likhein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi messages edit kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/del", "del", "/delete", "delete"):
+                    if is_telegram_admin(chat_id, user_id):
+                        if reply_to_msg:
+                            telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
+                            telegram_delete_message(chat_id, message_id)
+                        else:
+                            send_telegram("ℹ️ Kisi message ko delete karne ke liye us message ko reply karke `/del` likhein.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/del` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/purge", "purge", "/clean", "clean"):
+                    if is_telegram_admin(chat_id, user_id):
+                        count_arg = text[len(first_word):].strip()
+                        try:
+                            count = int(count_arg.split()[0]) if count_arg else 5
+                            count = min(max(1, count), 100)
+                        except Exception:
+                            count = 5
+                        mids_to_del = [message_id - i for i in range(count + 1)]
+                        ok = telegram_delete_messages(chat_id, mids_to_del)
+                        if not ok:
+                            for m in mids_to_del:
+                                telegram_delete_message(chat_id, m)
+                        send_telegram(f"🧹 *{count} messages successfully clean kar diye gaye hain.*", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi `/purge` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                # Permission 3: Manage Stories (Post, Edit, Delete)
+                if cmd in ("/story", "story", "/poststory", "poststory"):
+                    if is_telegram_admin(chat_id, user_id):
+                        story_content = text[len(first_word):].strip()
+                        if story_content:
+                            story_id = f"story_{int(time.time()) % 100000}"
+                            parts = story_content.split("|", 1)
+                            headline = parts[0].strip() if len(parts) > 1 else "Market Flash Story"
+                            body = parts[1].strip() if len(parts) > 1 else parts[0].strip()
+                            story_card = (
+                                f"🌟 *══════ 24H MARKET STORY ══════* 🌟\n\n"
+                                f"📌 *{headline}*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{body}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🕒 *Active 24 Hours* • Story ID: `#{story_id}`\n"
+                                f"⚡ _SMC Institutional Intelligence_"
+                            )
+                            sent = send_telegram_msg(story_card, chat_id=chat_id, parse_mode="Markdown")
+                            if sent and sent.get("message_id"):
+                                smid = sent.get("message_id")
+                                telegram_pin_message(chat_id, smid, notify=False)
+                                state.setdefault("stories", {})[story_id] = {
+                                    "message_id": smid,
+                                    "chat_id": chat_id,
+                                    "headline": headline,
+                                    "body": body,
+                                    "timestamp": time.time(),
+                                }
+                                save_state(state)
+                                telegram_delete_message(chat_id, message_id)
+                            else:
+                                send_telegram("❌ Story post karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: `/story <Headline> | <Details>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi Market Stories post kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/editstory", "editstory"):
+                    if is_telegram_admin(chat_id, user_id):
+                        new_story_text = text[len(first_word):].strip()
+                        target_sid = None
+                        target_mid = None
+                        if reply_to_msg:
+                            r_mid = reply_to_msg.get("message_id")
+                            for sid, sdata in state.get("stories", {}).items():
+                                if sdata.get("message_id") == r_mid:
+                                    target_sid = sid
+                                    target_mid = r_mid
+                                    break
+                        if not target_sid and new_story_text:
+                            first_token = new_story_text.split()[0].replace("#", "")
+                            if first_token in state.get("stories", {}):
+                                target_sid = first_token
+                                target_mid = state["stories"][target_sid].get("message_id")
+                                new_story_text = new_story_text[len(first_token):].strip()
+
+                        if target_mid and new_story_text:
+                            parts = new_story_text.split("|", 1)
+                            headline = parts[0].strip() if len(parts) > 1 else "Market Flash Story (Updated)"
+                            body = parts[1].strip() if len(parts) > 1 else parts[0].strip()
+                            updated_card = (
+                                f"🌟 *══════ 24H MARKET STORY ══════* 🌟\n\n"
+                                f"📌 *{headline}*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{body}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🕒 *Active 24 Hours* • Story ID: `#{target_sid}` *(Updated)*\n"
+                                f"⚡ _SMC Institutional Intelligence_"
+                            )
+                            if telegram_edit_message(chat_id, target_mid, updated_card):
+                                state["stories"][target_sid]["headline"] = headline
+                                state["stories"][target_sid]["body"] = body
+                                save_state(state)
+                                send_telegram(f"✅ *Story #{target_sid} successfully updated!*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ Story edit karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: Reply to story with `/editstory <Headline> | <New text>` ya `/editstory <story_id> <New text>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi Stories edit kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/delstory", "delstory", "/deletestory", "deletestory"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_sid = None
+                        target_mid = None
+                        if reply_to_msg:
+                            r_mid = reply_to_msg.get("message_id")
+                            for sid, sdata in list(state.get("stories", {}).items()):
+                                if sdata.get("message_id") == r_mid:
+                                    target_sid = sid
+                                    target_mid = r_mid
+                                    break
+                        if not target_sid:
+                            arg = text[len(first_word):].strip().replace("#", "")
+                            if arg in state.get("stories", {}):
+                                target_sid = arg
+                                target_mid = state["stories"][target_sid].get("message_id")
+
+                        if target_mid:
+                            telegram_delete_message(chat_id, target_mid)
+                            telegram_unpin_message(chat_id, target_mid)
+                            if target_sid and target_sid in state.get("stories", {}):
+                                del state["stories"][target_sid]
+                                save_state(state)
+                            send_telegram("✅ *Market story successfully deleted and unpinned.*", chat_id=chat_id, parse_mode="Markdown")
+                        else:
+                            send_telegram("ℹ️ Usage: Reply to story with `/delstory` ya `/delstory <story_id>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi Stories delete kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/stories", "stories"):
+                    stories = state.get("stories", {})
+                    if not stories:
+                        send_telegram("ℹ️ Is group me koi active Market Story nahi hai. Admin `/story` command se 24h story post kar sakte hain.", chat_id=chat_id)
+                    else:
+                        lines = ["🌟 *Active Market Stories:*", "━━━━━━━━━━━━━━━━━━━━"]
+                        for sid, sdata in stories.items():
+                            hl = sdata.get("headline", "Market Story")
+                            elapsed_m = int((time.time() - sdata.get("timestamp", time.time())) / 60)
+                            lines.append(f"• `#{sid}`: *{hl}* ({elapsed_m}m ago)")
+                        lines.append("━━━━━━━━━━━━━━━━━━━━")
+                        lines.append("💡 Edit ke liye `/editstory <id>`, delete ke liye `/delstory <id>`")
+                        send_telegram("\n".join(lines), chat_id=chat_id, parse_mode="Markdown")
+                    continue
+
+                # Permission 4: Manage Direct Messages (DM)
+                if cmd in ("/dm", "dm", "/pm", "pm"):
+                    if is_telegram_admin(chat_id, user_id):
+                        dm_content = text[len(first_word):].strip()
+                        target_uid = None
+                        dm_text = ""
+                        if reply_to_msg:
+                            target_uid = reply_to_msg.get("from", {}).get("id")
+                            dm_text = dm_content
+                        elif dm_content:
+                            parts = dm_content.split(None, 1)
+                            if parts[0].isdigit() and len(parts) > 1:
+                                target_uid = int(parts[0])
+                                dm_text = parts[1].strip()
+
+                        if target_uid and dm_text:
+                            pm_msg = (
+                                f"📩 *Direct Message from {chat_title} Admin:*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{dm_text}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"👤 _Sent via {bot_username or 'Institutional Bot'}_"
+                            )
+                            if telegram_send_dm(target_uid, pm_msg):
+                                send_telegram(f"✅ *Direct Message (DM) successfully sent to user `{target_uid}`!*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ DM bhejne me error aayi. (User ko bot ke saath pehle private chat me `/start` dabana padta hai).", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage:\n• User ke message ko reply karke `/dm <message>` likhein\n• Ya `/dm <user_id> <message>` likhein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi `/dm` command se direct messages bhej sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/dmme", "dmme", "/pmme", "pmme"):
+                    if user_id:
+                        sheet_url = get_sheet_link()
+                        sheet_line = f"• 📊 [Live Google Sheet Analysis]({sheet_url})\n" if sheet_url else ""
+                        private_briefing = (
+                            f"👋 *Namaste {user_name}! Aapka Private Market Briefing:*\n\n"
+                            f"📈 *Monitored Pairs:* {', '.join(SYMBOLS)}\n"
+                            f"⏱️ *Active Timeframes:* {', '.join(TIMEFRAMES)}\n"
+                            f"🧠 *AI Model:* Groq `{GROQ_MODEL}`\n"
+                            f"{sheet_line}\n"
+                            f"💡 *Private Commands:*\n"
+                            f"• `/charts` - Instant live candlestick charts with PD-OHLC levels\n"
+                            f"• `/scan` - Real-time liquidity sweep & order block detection\n"
+                            f"• `/ask <question>` - Ask any trading or market structure query\n"
+                            f"• `/status` - Check 24/7 background scanner status"
+                        )
+                        if telegram_send_dm(user_id, private_briefing):
+                            send_telegram(f"✅ {user_name}, aapko direct message (DM) bhej diya gaya hai! Please check your private chat.", chat_id=chat_id, reply_to_message_id=message_id)
+                        else:
+                            send_telegram(f"⚠️ {user_name}, bot aapko DM nahi bhej saka. Kripya pehle bot ke private chat me `/start` dabayein.", chat_id=chat_id, reply_to_message_id=message_id)
+                    continue
+
+                # Permission 5: Send Welcome Messages
+                if cmd in ("/setwelcome", "setwelcome"):
+                    if is_telegram_admin(chat_id, user_id):
+                        new_w = text[len(first_word):].strip()
+                        if new_w:
+                            state["custom_welcome"] = new_w
+                            save_state(state)
+                            send_telegram("✅ *Custom welcome message successfully saved!*", chat_id=chat_id, parse_mode="Markdown")
+                        else:
+                            send_telegram(
+                                "ℹ️ Usage: `/setwelcome <Aapka Welcome Message>`\n\n"
+                                "*Placeholders Available:*\n"
+                                "• `{name}` - New member ka naam\n"
+                                "• `{user}` - @username ya naam\n"
+                                "• `{chat_title}` - Group title",
+                                chat_id=chat_id,
+                                parse_mode="Markdown",
+                            )
+                    else:
+                        send_telegram("❌ Sirf administrators hi welcome message set kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/viewwelcome", "viewwelcome", "/welcome", "welcome"):
+                    custom_w = state.get("custom_welcome")
+                    if custom_w:
+                        sample = custom_w.replace("{name}", user_name).replace("{user}", f"@{user.get('username') or user_name}").replace("{chat_title}", chat_title)
+                        send_telegram(f"👋 *Current Welcome Message Template:*\n━━━━━━━━━━━━━━━━━━━━\n{sample}\n━━━━━━━━━━━━━━━━━━━━\n💡 Reset karne ke liye `/resetwelcome` use karein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("👋 *Default Institutional Welcome Active:*\nNew members ke judne par automated welcome message with SMC trading commands bheja jata hai.", chat_id=chat_id, parse_mode="Markdown")
+                    continue
+
+                if cmd in ("/resetwelcome", "resetwelcome"):
+                    if is_telegram_admin(chat_id, user_id):
+                        state["custom_welcome"] = ""
+                        save_state(state)
+                        send_telegram("✅ *Welcome message default institutional template par reset kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi welcome message reset kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                # Permission 6: Manage Live Streams
+                if cmd in ("/livestream", "livestream", "/stream", "stream"):
+                    if is_telegram_admin(chat_id, user_id):
+                        stream_topic = text[len(first_word):].strip() or "Live Institutional Crypto SMC Trading & Analysis"
+                        stream_card = (
+                            f"🔴 *══════ LIVE TRADING STREAM ══════* 🔴\n\n"
+                            f"🎙️ *Topic:* {stream_topic}\n"
+                            f"📅 *Status:* 🟢 *LIVE SESSION ACTIVE NOW*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📈 *Agenda:* Real-time Market Liquidity Sweeps, Order Blocks, and Q&A!\n"
+                            f"👉 Voice/Video Chat abhi start karein aur join karein!\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"⚡ _Hosted by {user_name} (Admin)_"
+                        )
+                        sent = send_telegram_msg(stream_card, chat_id=chat_id, parse_mode="Markdown")
+                        if sent and sent.get("message_id"):
+                            smid = sent.get("message_id")
+                            telegram_pin_message(chat_id, smid, notify=True)
+                            state["active_stream"] = {
+                                "message_id": smid,
+                                "chat_id": chat_id,
+                                "topic": stream_topic,
+                                "host": user_name,
+                                "started_at": time.time(),
+                            }
+                            save_state(state)
+                        else:
+                            send_telegram("❌ Live stream announce karne me error aayi.", chat_id=chat_id)
+                    else:
+                        send_telegram("❌ Sirf administrators hi live streams announce/pin kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/endstream", "endstream"):
+                    if is_telegram_admin(chat_id, user_id):
+                        active_stream = state.get("active_stream", {})
+                        stream_mid = active_stream.get("message_id")
+                        if stream_mid:
+                            telegram_unpin_message(chat_id, stream_mid)
+                        state["active_stream"] = {}
+                        save_state(state)
+                        recap_arg = text[len(first_word):].strip()
+                        recap_extra = f"\n\n📝 *Key Takeaways:*\n{recap_arg}" if recap_arg else ""
+                        conclude_msg = (
+                            f"🏁 *LIVE TRADING STREAM CONCLUDED!*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"Aaj ka live session successfully complete ho gaya hai.{recap_extra}\n\n"
+                            f"🙏 Thank you sabhi traders for joining! 24/7 scanning channel me active rahegi."
+                        )
+                        send_telegram(conclude_msg, chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators hi live stream end kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/streamschedule", "streamschedule"):
+                    if is_telegram_admin(chat_id, user_id):
+                        sched_text = text[len(first_word):].strip()
+                        if sched_text:
+                            sched_msg = (
+                                f"📅 *UPCOMING LIVE STREAM SCHEDULE:*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"{sched_text}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🔔 Set your reminders! Live trading execution & SMC breakdowns."
+                            )
+                            sent = send_telegram_msg(sched_msg, chat_id=chat_id, parse_mode="Markdown")
+                            if sent and sent.get("message_id"):
+                                telegram_pin_message(chat_id, sent.get("message_id"), notify=False)
+                        else:
+                            send_telegram("ℹ️ Usage: `/streamschedule <Date & Time> - <Topic>`", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf administrators schedule announce kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                # Permission 7: Ban Users & Moderation
+                if cmd in ("/ban", "ban"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_id = None
+                        target_name = None
+                        if reply_to_msg:
+                            target_user = reply_to_msg.get("from", {})
+                            target_id = target_user.get("id")
+                            target_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                        else:
+                            raw_arg = text[len(first_word):].strip()
+                            if raw_arg and raw_arg.split()[0].isdigit():
+                                target_id = int(raw_arg.split()[0])
+                                target_name = f"User `{target_id}`"
+
+                        if target_id:
+                            if telegram_ban_member(chat_id, target_id):
+                                send_telegram(f"🚫 *User {target_name} ko group se permanently ban kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                                if reply_to_msg:
+                                    telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
+                            else:
+                                send_telegram("❌ User ko ban karne me error aayi. Please bot permissions verify karein.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage:\n• User ke message ko reply karke `/ban` send karein\n• Ya `/ban <user_id>` send karein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/ban` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/unban", "unban"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_id = None
+                        target_name = None
+                        if reply_to_msg:
+                            target_user = reply_to_msg.get("from", {})
+                            target_id = target_user.get("id")
+                            target_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                        else:
+                            raw_arg = text[len(first_word):].strip()
+                            if raw_arg and raw_arg.split()[0].isdigit():
+                                target_id = int(raw_arg.split()[0])
+                                target_name = f"User `{target_id}`"
+
+                        if target_id:
+                            if telegram_unban_member(chat_id, target_id):
+                                send_telegram(f"✅ *User {target_name} unban ho gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ User ko unban karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: Reply karke `/unban` ya `/unban <user_id>` send karein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/unban` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/kick", "kick"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_id = None
+                        target_name = None
+                        if reply_to_msg:
+                            target_user = reply_to_msg.get("from", {})
+                            target_id = target_user.get("id")
+                            target_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                        else:
+                            raw_arg = text[len(first_word):].strip()
+                            if raw_arg and raw_arg.split()[0].isdigit():
+                                target_id = int(raw_arg.split()[0])
+                                target_name = f"User `{target_id}`"
+
+                        if target_id:
+                            if telegram_kick_member(chat_id, target_id):
+                                send_telegram(f"👢 *User {target_name} ko group se kick kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                                if reply_to_msg:
+                                    telegram_delete_message(chat_id, reply_to_msg.get("message_id"))
+                            else:
+                                send_telegram("❌ User ko kick karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: Reply karke `/kick` ya `/kick <user_id>` send karein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/kick` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/mute", "mute", "/restrict", "restrict"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_id = None
+                        target_name = None
+                        dur_arg = ""
+                        raw_arg = text[len(first_word):].strip()
+                        tokens = raw_arg.split()
+
+                        if reply_to_msg:
+                            target_user = reply_to_msg.get("from", {})
+                            target_id = target_user.get("id")
+                            target_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                            dur_arg = tokens[0] if tokens else "1h"
+                        elif tokens and tokens[0].isdigit():
+                            target_id = int(tokens[0])
+                            target_name = f"User `{target_id}`"
+                            dur_arg = tokens[1] if len(tokens) > 1 else "1h"
+
+                        if target_id:
+                            sec = parse_duration_sec(dur_arg, default_sec=3600)
+                            mins = sec // 60
+                            dur_desc = f"{mins // 60}h" if mins >= 60 else f"{mins}m"
+                            if telegram_mute_member(chat_id, target_id, duration_sec=sec):
+                                send_telegram(f"🔇 *User {target_name} ko {dur_desc} ke liye mute kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ User ko mute karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: Reply karke `/mute [30m|2h|1d]` ya `/mute <user_id> [duration]` send karein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/mute` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                if cmd in ("/unmute", "unmute"):
+                    if is_telegram_admin(chat_id, user_id):
+                        target_id = None
+                        target_name = None
+                        if reply_to_msg:
+                            target_user = reply_to_msg.get("from", {})
+                            target_id = target_user.get("id")
+                            target_name = target_user.get("first_name") or target_user.get("username") or str(target_id)
+                        else:
+                            raw_arg = text[len(first_word):].strip()
+                            if raw_arg and raw_arg.split()[0].isdigit():
+                                target_id = int(raw_arg.split()[0])
+                                target_name = f"User `{target_id}`"
+
+                        if target_id:
+                            if telegram_unmute_member(chat_id, target_id):
+                                send_telegram(f"🔊 *User {target_name} ko successfully unmute kar diya gaya hai.*", chat_id=chat_id, parse_mode="Markdown")
+                            else:
+                                send_telegram("❌ User ko unmute karne me error aayi.", chat_id=chat_id)
+                        else:
+                            send_telegram("ℹ️ Usage: Reply karke `/unmute` ya `/unmute <user_id>` send karein.", chat_id=chat_id, parse_mode="Markdown")
+                    else:
+                        send_telegram("❌ Sirf group administrators hi `/unmute` command use kar sakte hain.", chat_id=chat_id)
+                    continue
+
+                # Group Rules & Community Information
                 if cmd in ("/rules", "rules"):
                     rules_msg = (
                         f"📜 *{chat_title} - Group Rules & Guidelines:*\n\n"
                         f"1. 🚫 *No Spam & Promotion:* Unsolicited telegram/external invite links ya promotional spam strictly prohibited hai.\n"
                         f"2. 📈 *Trading Discipline:* Har trade par proper Stop Loss (SL) aur risk management (1-2% capital risk) follow karein.\n"
                         f"3. 🤝 *Respect Community:* Respectful aur informative discussion rakhein.\n"
-                        f"4. 🤖 *AI Trading Mentor:* Groq AI se koi bhi question puchne ke liye `/ask <question>` use karein.\n"
+                        f"4. 🤖 *AI Trading Mentor:* Groq AI se koi bhi question puchne ke liye `@ai <question>` use karein.\n"
                         f"5. ⚠️ *Disclaimer:* Yahan provide kiye gaye signals educational purpose ke liye hain. Always DYOR!"
                     )
                     send_telegram(rules_msg, chat_id=chat_id, parse_mode="Markdown")
@@ -2926,26 +3540,53 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     sheet_url = get_sheet_link()
                     sheet_line = f"• 📊 [Open Live Google Sheet]({sheet_url})\n" if sheet_url else ""
                     help_msg = (
-                        f"🤖 *Crypto Trading & Group Bot Commands ({chat_title}):*\n\n"
-                        "📈 *Market & Trading Commands:*\n"
-                        "• `chart image` ya `/charts` - *Har symbol ka chart + PDH, PDL, PDO, PDC*\n"
-                        "• `chart <coin>` (e.g. `chart btc`, `chart eth`) - *Single coin chart image*\n"
-                        "• `what are doing` ya `kya kar rahe ho` - *Bot Activity & Analysis Report*\n"
-                        "• `/ask <question>` (e.g. `/ask BTC key levels?`) - *Groq AI Institutional Answer*\n"
-                        "• `/scan` ya `scan` - *Instant sweep & OB scan*\n"
+                        f"🤖 *Crypto Trading & Group Bot Hub ({chat_title}):*\n\n"
+                        "📈 *Market & Trading Signals:*\n"
+                        "• `chart image` ya `/charts` - *Har symbol ka visual chart + PDH/PDL*\n"
+                        "• `chart <coin>` (e.g. `chart btc`) - *Single coin chart image*\n"
+                        "• `what are doing` ya `kya kar rahe ho` - *Bot Activity Report*\n"
+                        "• `@ai <question>` (e.g. `@ai BTC trend?`) - *Groq AI Institutional Answer*\n"
+                        "• `/scan` - *Instant liquidity sweep & OB scan*\n"
                         "• `/status` - *Current bot & scanner state*\n"
                         "• `/rules` - *Group rules & trading risk policy*\n\n"
-                        "🛡️ *Admin & Moderation Commands:*\n"
-                        "• `/del` (Reply to message) - *Message delete karein*\n"
-                        "• `/ban` (Reply to user) - *User ko group se ban karein*\n"
-                        "• `/unban` (Reply to user) - *User ko unban karein*\n"
-                        "• `/mute` (Reply to user) - *User ko 1 hr ke liye mute karein*\n"
-                        "• `/pin` (Reply to message) - *Message pin karein*\n"
-                        "• `/unpin` - *Message unpin karein*\n"
-                        "• `/settitle <title>` - *Group ka title update karein*\n"
-                        "• `/setdesc <description>` - *Group ka description update karein*\n"
-                        "• `/announce <text>` - *Official announcement post karein*\n"
-                        "• `/end` / `/start` - *Pause / Resume 24/7 scanner (Admin)*\n"
+                        "🛡️ *Group Administration & Moderation (7 Permissions):*\n"
+                        "1️⃣ *Change Channel Info:*\n"
+                        "  • `/settitle <Title>` - Update title\n"
+                        "  • `/setdesc <Desc>` - Update description\n"
+                        "  • `/delphoto` - Remove group photo\n"
+                        "  • `/channelinfo` - Full channel & permission overview\n\n"
+                        "2️⃣ *Manage Messages:*\n"
+                        "  • `/announce <text>` - Official framed announcement\n"
+                        "  • `/post <text>` - Post plain message as bot\n"
+                        "  • `/edit <new text>` (Reply) - Edit bot message\n"
+                        "  • `/del` (Reply) - Delete target message\n"
+                        "  • `/purge <count>` - Bulk delete recent messages\n\n"
+                        "3️⃣ *Manage Stories:*\n"
+                        "  • `/story <Headline> | <Text>` - Post pinned 24H story\n"
+                        "  • `/editstory <id> <new text>` - Edit active story\n"
+                        "  • `/delstory <id>` - Delete & unpin story\n"
+                        "  • `/stories` - List active market stories\n\n"
+                        "4️⃣ *Manage Direct Messages (DM):*\n"
+                        "  • `/dm <message>` (Reply) - Send direct PM to member\n"
+                        "  • `/dm <user_id> <message>` - Send DM by User ID\n"
+                        "  • `/dmme` - Get private market report in your DM\n\n"
+                        "5️⃣ *Send Welcome Messages:*\n"
+                        "  • `/setwelcome <template>` - Customize greeting message\n"
+                        "  • `/viewwelcome` - Preview current greeting\n"
+                        "  • `/resetwelcome` - Reset to institutional default\n\n"
+                        "6️⃣ *Manage Live Streams:*\n"
+                        "  • `/livestream <topic>` - Announce & pin live trading stream\n"
+                        "  • `/endstream [recap]` - Conclude session & unpin\n"
+                        "  • `/streamschedule <time> - <topic>` - Announce stream schedule\n\n"
+                        "7️⃣ *Ban Users & Moderation:*\n"
+                        "  • `/ban` (Reply or `<id>`) - Permanent ban\n"
+                        "  • `/unban` (Reply or `<id>`) - Unban user\n"
+                        "  • `/kick` (Reply or `<id>`) - Remove member (kick)\n"
+                        "  • `/mute [30m|2h|1d]` - Restrict messaging\n"
+                        "  • `/unmute` (Reply or `<id>`) - Restore messaging\n\n"
+                        "⚙️ *System Controls:*\n"
+                        "  • `/end` - Pause 24/7 scanning\n"
+                        "  • `/start` - Resume 24/7 scanning\n"
                         f"{sheet_line}\n"
                         f"Current State: {status_str}"
                     )

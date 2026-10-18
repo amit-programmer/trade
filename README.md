@@ -149,23 +149,78 @@ Aap apne Telegram chat se bot ko direct control aur query kar sakte hain. Bot sl
 | `/rules` | `group rules`, `rules` | Group ke trading guidelines, risk management rules aur disclaimer display karta hai. |
 | `/help` | `help`, `commands` | Available commands ki list show karta hai. |
 
-### 🛡️ Group Moderation & Admin Commands:
+### 🛡️ Group Moderation & Administration (7 Configured Permissions):
+
+Bot ke paas group/channel administration ke sabhi 7 standard permissions configured hain:
+
+#### 1️⃣ Change Channel Info
 | Command | Usage | Description |
 |---|---|---|
-| Auto Welcome | *Automatic* | Naye members ke join hote hi unka warm institutional welcome karta hai with group rules & commands. |
-| Anti-Spam Filter | *Automatic* | Unsolicited promotion, scam invite links (`t.me/+`, WhatsApp links) ko automatically delete karke warning deta hai. |
-| `/del` | Reply to message | Target message aur command message dono ko delete kar deta hai. |
-| `/ban` | Reply to user message | Spammer ya rule breaker user ko group se permanently ban kar deta hai. |
-| `/unban` | Reply to user message | Pehle se banned user ko unban karta hai. |
-| `/mute` | Reply to user message | User ko 1 ghante ke liye mute/restrict kar deta hai (messages/media blocked). |
-| `/pin` | Reply to message | Kisi zaroori signal ya message ko group ke header me pin kar deta hai. |
-| `/unpin` | Reply to message | Pinned message ko unpin kar deta hai. |
-| `/settitle <title>` | `/settitle Crypto Signals` | Group ka title remotely update karta hai. |
-| `/setdesc <description>` | `/setdesc SMC Community` | Group ka description remotely update karta hai. |
-| `/announce <message>` | `/announce BTC breakout!` | Official formatted announcement post karta hai. |
-| `/end` | `/end` (Admin only) | 24/7 background scanning aur alerts ko pause (band) kar deta hai. |
-| `/start` | `/start` (Admin only) | Scanning wapas resume karta hai aur live market data fetch karta hai. |
-| `/exit` | `/exit` (Admin only) | Bot process ko safely stop/shutdown karta hai. |
+| `/settitle <title>` | `/settitle Crypto Institutional Hub` | Channel ya Group ka title update karta hai. |
+| `/setdesc <description>` | `/setdesc SMC 24/7 Signals & AI Mentor` | Channel ya Group ka description update karta hai. |
+| `/delphoto` | `/delphoto` | Group/Channel avatar photo ko remove kar deta hai. |
+| `/channelinfo` | `/channelinfo` | Group ka title, description, member count aur configured bot permissions checklist display karta hai. |
+
+#### 2️⃣ Manage Messages (Post, Edit, Delete)
+| Command | Usage | Description |
+|---|---|---|
+| Auto Trade Signals | *Automatic* | 24/7 SMC Sweeps, Order Blocks aur Groq AI validation cards channel me automatically post karta hai. |
+| Daily Chart Alerts | *Automatic* | Daily candlestick charts with PDH, PDL, PDO, PDC levels channel me automatically bhejta hai. |
+| `@ai <question>` | `@ai ETH next resistance?` | Direct quote-reply karke user ke specific trading query ka institutional breakdown deta hai. |
+| `/announce <message>` | `/announce Important risk update` | Official framed announcement banner post karta hai. |
+| `/post <message>` | `/post Clean signal update` | Bot ke through clean text post karta hai (command message delete ho jata hai). |
+| `/edit <new text>` | Reply to bot message | Pehle bheje gaye bot message ko remotely update/edit karta hai. |
+| `/del` | Reply to message | Target message aur command message dono ko chat se delete karta hai. |
+| `/purge <count>` | `/purge 10` | Recent messages ko bulk me delete karke chat clean karta hai (1 se 100 messages). |
+| Anti-Spam Auto-Delete | *Automatic* | External scam invite links (`t.me/+`, WhatsApp links) ko automatically delete karta hai. |
+
+#### 3️⃣ Manage Stories (Post, Edit, Delete)
+| Command | Usage | Description |
+|---|---|---|
+| `/story <headline> \| <text>` | `/story BTC Sweep \| High liquidity grabbed at 67.5k` | 24-Hour pinned Market Story card create karta hai with unique Story ID. |
+| `/editstory <id> <new text>` | `/editstory story_12345 \| Updated target 69k` | Active market story ko remotely edit karta hai. |
+| `/delstory <id>` | `/delstory story_12345` (ya reply to story) | Market story ko delete aur unpin karta hai. |
+| `/stories` | `/stories` | Current active market stories ki list aur duration dikhata hai. |
+
+#### 4️⃣ Manage Direct Messages (DM)
+| Command | Usage | Description |
+|---|---|---|
+| `/dm <message>` | Reply to user in group | Us user ko privately direct message (DM) bhejta hai. |
+| `/dm <user_id> <message>` | `/dm 6459170074 Trade alert details` | Specific user ID ko private message forward karta hai. |
+| `/dmme` | `/dmme` | Member ko private chat me instant market summary aur Google Sheet link send karta hai. |
+| Private AI Chat | User DMs the bot | 1-on-1 private trading questions, instant chart generation aur portfolio consultation. |
+
+#### 5️⃣ Send Welcome Messages
+| Command | Usage | Description |
+|---|---|---|
+| Auto Member Welcome | *Automatic* | Naye members ke join hote hi warm institutional welcome greeting post karta hai. |
+| Bot Self-Introduction | *Automatic* | Group me add hone par bot apni SMC features aur live commands introduce karta hai. |
+| `/setwelcome <template>` | `/setwelcome Namaste {name}! Welcome to {chat_title}.` | Custom welcome message set karta hai (supports `{name}`, `{user}`, `{chat_title}`). |
+| `/viewwelcome` | `/viewwelcome` | Current active welcome message ka preview dikhata hai. |
+| `/resetwelcome` | `/resetwelcome` | Welcome message ko default institutional template par reset karta hai. |
+
+#### 6️⃣ Manage Live Streams
+| Command | Usage | Description |
+|---|---|---|
+| `/livestream <topic>` | `/livestream US Session SMC Live Trading` | High-impact Live Stream Announcement card banakar group me pin karta hai (with notification). |
+| `/endstream [recap]` | `/endstream 3 setups taken, +4.2R booked` | Live stream ko conclude karta hai, recap post karta hai aur stream message unpin karta hai. |
+| `/streamschedule <time> - <topic>` | `/streamschedule Today 7 PM IST - Live Q&A` | Upcoming live session schedule announce aur pin karta hai. |
+
+#### 7️⃣ Ban Users & Moderation
+| Command | Usage | Description |
+|---|---|---|
+| `/ban` | Reply to user ya `/ban <user_id>` | Rule breaker ya spammer ko group se permanently ban kar deta hai. |
+| `/unban` | Reply to user ya `/unban <user_id>` | Banned user ko unban karta hai taaki woh rejoin kar sake. |
+| `/kick` | Reply to user ya `/kick <user_id>` | User ko group se kick (remove) kar deta hai bina permanent ban lagaye. |
+| `/mute [duration]` | Reply to user with `/mute 30m` ya `/mute 2h` | User ko specified time (`30m`, `2h`, `1d`, default 1h) ke liye mute karta hai. |
+| `/unmute` | Reply to user ya `/unmute <user_id>` | Restricted user ke messaging permissions wapas restore karta hai. |
+
+#### ⚙️ Scanner & Lifecycle Controls
+| Command | Usage | Description |
+|---|---|---|
+| `/end` | `/end` (Admin only) | 24/7 background scanning aur AI analysis ko pause kar deta hai. |
+| `/start` | `/start` (Admin only) | Background scanner ko resume karta hai aur live market scan trigger karta hai. |
+| `/exit` | `/exit` (Admin only) | Bot process ko completely safe shutdown karta hai. |
 
 ---
 
