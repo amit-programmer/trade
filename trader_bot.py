@@ -2576,10 +2576,13 @@ def handle_telegram_trading_question(
     bot_info = get_bot_info()
     bot_user = (bot_info.get("username") or "").lower()
 
-    # Strip prefixes like @ai, #ai, /ai, ai, /ask, ask, @botusername
-    patterns_to_strip = ["/ask", "ask", "/ai", "ai", "@ai", "#ai", "/q", "q"]
+    # Strip prefixes like @ai, #ai, /ai, ai, /ask, ask, @tado, tado, /tado, @botusername
+    patterns_to_strip = [
+        "/ask", "ask", "/ai", "ai", "@ai", "#ai", "/q", "q",
+        "@tado", "tado", "/tado", "#tado", "@todo", "todo",
+    ]
     if bot_user:
-        patterns_to_strip.extend([f"@{bot_user}", f"/ask@{bot_user}", f"/ai@{bot_user}"])
+        patterns_to_strip.extend([f"@{bot_user}", f"/ask@{bot_user}", f"/ai@{bot_user}", f"/tado@{bot_user}"])
 
     for prefix in patterns_to_strip:
         p_len = len(prefix)
@@ -2587,7 +2590,7 @@ def handle_telegram_trading_question(
             clean_q = clean_q[p_len:].strip(": ,")
             break
 
-    clean_q = re.sub(r'^(?:@ai|#ai|ai)\b[:,\s]*', '', clean_q, flags=re.IGNORECASE).strip()
+    clean_q = re.sub(r'^(?:@ai|#ai|ai|@tado|#tado|tado|@todo|todo)\b[:,\s]*', '', clean_q, flags=re.IGNORECASE).strip()
     if bot_user:
         clean_q = re.sub(rf'^@{re.escape(bot_user)}\b[:,\s]*', '', clean_q, flags=re.IGNORECASE).strip()
 
@@ -2743,6 +2746,8 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 text = (msg.get("text") or "").strip()
                 if not text:
                     continue
+
+                log.info("Telegram incoming from chat %s ('%s', user '%s'): '%s'", chat_id, chat_title, user_name, text)
 
                 # --- 2. ANTI-SPAM & AUTO-MODERATION (GROUPS) ---
                 if chat_type in ("group", "supergroup"):
@@ -3449,9 +3454,20 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     or clean_lower.startswith("/ai")
                     or clean_lower.startswith("@ai")
                     or ("ai" in words_clean[:3])
+                    or "@tado" in clean_lower
+                    or "#tado" in clean_lower
+                    or clean_lower.startswith("tado ")
+                    or clean_lower.startswith("tado,")
+                    or clean_lower.startswith("tado:")
+                    or clean_lower.startswith("/tado")
+                    or clean_lower.startswith("@tado")
+                    or ("tado" in words_clean[:3])
+                    or "@todo" in clean_lower
+                    or clean_lower.startswith("todo ")
+                    or ("todo" in words_clean[:3])
                     or is_bot_tagged
                     or is_reply_to_bot
-                    or cmd in ("/ask", "ask", "/ai", "ai", "/q", "q")
+                    or cmd in ("/ask", "ask", "/ai", "ai", "/q", "q", "/tado", "tado")
                     or clean_lower.startswith("/ask ")
                     or clean_lower.startswith("ask ")
                 )
