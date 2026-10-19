@@ -2072,10 +2072,7 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
 # =============================================================================
 def handle_telegram_start(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict, chat_id: str, is_activity_report: bool = False) -> None:
     now = datetime.now(LOCAL_TZ)
-    if is_activity_report:
-        send_telegram("🤖 *Main abhi analysis aur live activity report taiyar kar raha hoon... Ek pal rukhein!*", chat_id=chat_id, parse_mode="Markdown")
-    else:
-        send_telegram("⏳ *Fetching live market data & generating Groq AI trade suggestions...*", chat_id=chat_id, parse_mode="Markdown")
+    send_telegram_chat_action(chat_id, action="typing")
 
     market_raw = []
     prices_summary = []
@@ -3456,24 +3453,8 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         break
 
                 is_activity_cmd = (
-                    cmd in ("/activity", "activity", "/report", "report", "/what", "what")
-                    or "what are doing" in clean_lower
-                    or "what are you doing" in clean_lower
-                    or "what doing" in clean_lower
-                    or "what u doing" in clean_lower
-                    or "what r u doing" in clean_lower
-                    or "kya kar rahe" in clean_lower
-                    or "kya kar rhe" in clean_lower
-                    or "kya kr rahe" in clean_lower
-                    or "kya kr rhe" in clean_lower
-                    or "kya kar rha" in clean_lower
-                    or "kya kr rha" in clean_lower
-                    or "kya chal raha" in clean_lower
-                    or "kya chal rha" in clean_lower
-                    or "kya ho raha" in clean_lower
-                    or "whats going on" in clean_lower
-                    or "what's going on" in clean_lower
-                    or "analysis report" in clean_lower
+                    cmd in ("/activity", "/report")
+                    or clean_lower in ("activity", "report", "activity report", "analysis report")
                 )
 
                 is_stop_cmd = (
@@ -3536,6 +3517,18 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 if is_chart_cmd:
                     log.info("Chart images requested by %s ('%s'), requested_sym=%s", chat_id, text, requested_chart_sym)
                     handle_telegram_charts(client, chat_id, requested_sym=requested_chart_sym)
+                elif is_ai_tagged or chat_type == "private":
+                    # User asked Tado / AI a trading question or casual conversational query
+                    replied_txt = reply_to_msg.get("text") if reply_to_msg else None
+                    log.info("AI/Tado tagged query from %s (%s): '%s'", chat_id, chat_type, text)
+                    handle_telegram_trading_question(
+                        client,
+                        chat_id,
+                        text,
+                        reply_to_message_id=message_id,
+                        replied_text=replied_txt,
+                        user_name=user_name,
+                    )
                 elif is_activity_cmd:
                     log.info("Activity report requested by %s ('%s')", chat_id, text)
                     handle_telegram_start(client, sheets, state, chat_id, is_activity_report=True)
@@ -3668,19 +3661,6 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         f"Current State: {status_str}"
                     )
                     send_telegram(help_msg, chat_id=chat_id, parse_mode="Markdown")
-                elif is_ai_tagged or chat_type == "private":
-                    # User asked a trading question or tagged AI / bot!
-                    # Process with Groq AI Institutional Analyst and reply directly to user's message!
-                    replied_txt = reply_to_msg.get("text") if reply_to_msg else None
-                    log.info("AI tagged / trading query from %s (%s): '%s'", chat_id, chat_type, text)
-                    handle_telegram_trading_question(
-                        client,
-                        chat_id,
-                        text,
-                        reply_to_message_id=message_id,
-                        replied_text=replied_txt,
-                        user_name=user_name,
-                    )
                 else:
                     # In groups, ignore casual messages between members so bot does not spam
                     pass
