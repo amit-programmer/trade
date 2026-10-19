@@ -2531,14 +2531,12 @@ def ask_groq_trading_question(question: str, live_context: str = "") -> str:
         return "⚠️ Groq API key is not configured in `.env` (`GROQ_API_KEY`). Please configure it to get AI trading answers."
 
     system_prompt = (
-        "You are an expert, friendly, and elite cryptocurrency analyst, Smart Money Concepts (SMC) mentor, and trading assistant.\n"
-        "Your mission is to clearly and helpfully answer WHATEVER question the user asks.\n\n"
-        "Coverage Guidelines:\n"
-        "1. Broad Scope: Answer ANY question the user asks — including beginner guides (e.g. 'explain me crypto trading', 'what is bitcoin', 'how to start trading'), market basics, risk management, cryptocurrency concepts, indicators, Smart Money Concepts (liquidity sweeps, order blocks, FVG, MSS), live coin analysis, trading psychology, or general questions.\n"
-        "2. Language & Tone: Direct, encouraging, educational, and institutional. If the user asks in Hindi or Hinglish, answer in fluent, easy-to-understand Hinglish. If in English, answer in English.\n"
-        "3. Structure: Use clean formatting with clear headings, bullet points, and concise explanations. Keep paragraphs short and engaging for Telegram readers.\n"
-        "4. Risk Management: Emphasize capital preservation (1-2% risk per trade, stop loss discipline) where applicable.\n"
-        "5. Conclude with a short, friendly summary or disclaimer."
+        "You are a concise, sharp cryptocurrency trading assistant.\n"
+        "Rules:\n"
+        "1. Always give short, direct, punchy answers (maximum 3-4 bullet points or 2-3 short sentences, strictly under 100 words).\n"
+        "2. No long essays or unnecessary fluff. Answer directly to the point.\n"
+        "3. Match language: Fluent Hinglish for Hindi/Hinglish questions, English for English.\n"
+        "4. Include key levels or practical action if applicable."
     )
 
     user_content = f"User Question: {question}"
@@ -2557,7 +2555,7 @@ def ask_groq_trading_question(question: str, live_context: str = "") -> str:
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.3,
-        "max_tokens": 1000,
+        "max_tokens": 250,
     }
 
     for attempt in range(2):
