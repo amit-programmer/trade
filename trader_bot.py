@@ -22,6 +22,7 @@ guarantees profit. Paper-trade / backtest before risking money.
 from __future__ import annotations
 
 import argparse
+import collections
 import io
 import json
 import logging
@@ -2714,6 +2715,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
         pass
 
     log.info("Telegram command listener active (listening for /ai, @ai, @tado, /charts, /scan, /status)...")
+    processed_msg_keys: collections.deque[str] = collections.deque(maxlen=2000)
 
     while not STOP.is_set():
         try:
@@ -2721,7 +2723,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
             params = {
                 "offset": offset,
                 "timeout": 10,
-                "allowed_updates": json.dumps(["message", "edited_message", "channel_post", "edited_channel_post", "my_chat_member", "chat_member"]),
+                "allowed_updates": json.dumps(["message", "channel_post", "my_chat_member", "chat_member"]),
             }
             resp = requests.get(url, params=params, timeout=20)
             if resp.status_code != 200:
@@ -2734,8 +2736,11 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
 
             for update in res.get("result", []):
                 offset = max(offset, update["update_id"] + 1)
-                msg = update.get("message") or update.get("edited_message") or update.get("channel_post") or update.get("edited_channel_post")
+                msg = update.get("message") or update.get("channel_post")
                 if not msg:
+                    continue
+                # Ignore automatic forwards from linked channels into discussion groups to prevent double replies
+                if msg.get("is_automatic_forward"):
                     continue
                 chat = msg.get("chat", {})
                 chat_id = str(chat.get("id"))
@@ -2745,6 +2750,11 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 user_id = user.get("id") or (int(chat_id) if chat_id.lstrip("-").isdigit() else None)
                 user_name = user.get("first_name") or user.get("username") or chat_title or "Trader"
                 message_id = msg.get("message_id")
+                if message_id:
+                    msg_key = f"{chat_id}_{message_id}"
+                    if msg_key in processed_msg_keys:
+                        continue
+                    processed_msg_keys.append(msg_key)
 
                 # --- 1. WELCOME NEW MEMBERS ---
                 new_members = msg.get("new_chat_members")
