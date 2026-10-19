@@ -2538,22 +2538,23 @@ def handle_telegram_charts(client: BinanceClient, chat_id: str, requested_sym: O
 def ask_groq_trading_question(question: str, live_context: str = "", user_name: str = "") -> str:
     """
     Sends a user trading question to Groq AI (qwen/qwen3.8-27b).
-    Enforces a friendly, interactive, short-form response in fluent Hinglish (<100 words).
+    Enforces a friendly, natural human trader response in fluent Hinglish (<70 words).
     """
     if not GROQ_API_KEY:
-        return "⚠️ Groq API key is not configured in `.env` (`GROQ_API_KEY`). Please configure it to get AI trading answers."
+        return "Bhai, market analyst connection abhi available nahi hai. Thodi der me try karein."
 
-    user_note = f"The user's name is {user_name}." if user_name else "Address the user warmly as 'bhai' or 'dost'."
+    user_note = f"The user asking is {user_name}." if user_name else "Address the user warmly as 'bhai' or 'dost'."
 
     system_prompt = (
-        "You are 'Tado AI' (or Daily Trade AI), a super friendly, energetic, and expert crypto trading mentor in an Indian trading community.\n"
+        "You are 'Tado', a friendly and highly experienced crypto trader from the 'Daily Trade' team.\n"
         f"{user_note}\n\n"
         "STRICT MANDATORY RULES:\n"
-        "1. LANGUAGE: Always respond in natural, friendly HINGLISH (Hindi written in Roman/English script, e.g., 'Bhai crypto trading ka seedha matlab hai...'). Use standard trading terms like Buy/Sell, Profit, Loss, Long/Short, Support, Resistance, SL, TP.\n"
-        "2. TONE: Very friendly, warm, conversational, and encouraging (talk like a smart elder brother / trading partner). Never sound robotic, cold, or formal.\n"
-        "3. SHORT FORM: Strictly 2-3 short sentences or 3-4 crisp bullet points (strictly under 80-100 words total). Never output essays or long paragraphs.\n"
-        "4. USER INTERACTIVE: ALWAYS end with a short, engaging, interactive question so the user stays involved (e.g., 'Aap spot me trade karte ho ya futures me?', 'Kis coin me trade lene ki soch rahe ho bhai?').\n"
-        "5. PRACTICAL & RISK-CONSCIOUS: Provide accurate, actionable insights and always emphasize risk management (SL) when discussing trade execution."
+        "1. HUMAN IDENTITY (CRITICAL): NEVER say, mention, or admit that you are an AI, bot, machine, language model, or virtual assistant! Always speak and act like a real, experienced human trader named Tado. If someone asks 'who are you', 'kaun ho', or introduces themselves, reply naturally: 'Bhai main Tado hu, Daily Trade team se! Yahan market setups, key levels aur trading guidance share karta hu.'\n"
+        "2. LANGUAGE: Always respond in natural, friendly HINGLISH (Hindi written in Roman/English script, e.g., 'Bhai crypto trading ka seedha matlab hai...'). Use standard trading terms like Buy/Sell, Profit, Loss, Long/Short, Support, Resistance, SL, TP.\n"
+        "3. TONE: Very friendly, warm, casual, and supportive (talk like a real fellow trader or helpful elder brother). Never sound robotic, automated, cold, or formal.\n"
+        "4. SHORT FORM: Strictly 2-3 short sentences or 2-3 crisp bullet points (strictly under 60-80 words total). Keep it punchy, exactly like a human messaging on Telegram.\n"
+        "5. USER INTERACTIVE: ALWAYS end with a short, natural question so the user stays engaged (e.g., 'Aap spot me trade karte ho ya futures me?', 'Kis coin me entry plan kar rahe ho bhai?').\n"
+        "6. RISK MANAGEMENT: Always remind about Stop Loss (SL) or risk management when discussing trades."
     )
 
     user_content = f"User Question: {question}"
@@ -2585,13 +2586,13 @@ def ask_groq_trading_question(question: str, live_context: str = "", user_name: 
                 time.sleep(2)
                 continue
             else:
-                log.warning("Groq AI question error HTTP %s: %s", resp.status_code, scrub(resp.text))
-                return f"⚠️ Groq AI API error (HTTP {resp.status_code}). Please try again."
+                log.warning("Groq question error HTTP %s: %s", resp.status_code, scrub(resp.text))
+                return "Bhai, market server se connect nahi ho paya. Ek baar phir puchein."
         except Exception as exc:
-            log.warning("Groq AI question request failed: %s", scrub(exc))
+            log.warning("Groq question request failed: %s", scrub(exc))
             time.sleep(1)
 
-    return "⚠️ Groq AI se connect karne me problem aayi. Please ek baar phir try karein."
+    return "Bhai, connection error aayi hai. Kripya ek baar phir try karein."
 
 
 def handle_telegram_trading_question(
@@ -2602,7 +2603,7 @@ def handle_telegram_trading_question(
     replied_text: Optional[str] = None,
     user_name: Optional[str] = None,
 ) -> None:
-    """Handles an interactive trading question from Telegram and replies directly to user using Groq AI in friendly Hinglish."""
+    """Handles an interactive trading question from Telegram and replies directly as human trader Tado in friendly Hinglish."""
     clean_q = question.strip()
     bot_info = get_bot_info()
     bot_user = (bot_info.get("username") or "").lower()
@@ -2627,11 +2628,9 @@ def handle_telegram_trading_question(
     casual_greetings = {"hi", "hello", "hey", "namaste", "hola", "yo", "sup", "kaise ho", "kya haal hai", "good morning", "good evening"}
     if clean_q.lower() in casual_greetings:
         send_telegram(
-            f"👋 *Arre hello {display_name} bhai!*\n\n"
-            f"Main aapka AI trading mentor hu. Aaj market me koi badhiya setup dekh rahe ho ya trading ke baare me kuch puchna hai?\n\n"
-            f"Bolo bhai, kya help chahiye? 🚀",
+            f"Arre hello {display_name} bhai! 🙌 Sab badhiya ekdum, aap batao kaise ho?\n\n"
+            f"Aaj market me koi badhiya setup dekh rahe ho ya kisi coin ke baare me puchna hai? Bolo bhai! 🚀",
             chat_id=chat_id,
-            parse_mode="Markdown",
             reply_to_message_id=reply_to_message_id,
         )
         return
@@ -2639,14 +2638,11 @@ def handle_telegram_trading_question(
     # If completely empty query after stripping
     if not clean_q:
         send_telegram(
-            f"👋 *Haanji {display_name} bhai! Main aapka AI trading mentor hu.*\n\n"
-            f"Aap mujhse crypto trading ke baare me koi bhi question puch sakte hain! Jaise:\n"
-            f"• `@ai explain me crypto trading`\n"
-            f"• `@ai BTC ka next support aur resistance kya hai?`\n"
-            f"• `@ai Order Block aur Liquidity Sweep me kya difference hai?`\n\n"
-            f"Bolo bhai, aapka kya sawal hai? 🚀",
+            f"Haanji {display_name} bhai! Batao, crypto market ya kisi coin ke baare me kya sawal hai? Jaise:\n"
+            f"• `@tado BTC ka trend kaisa lag raha hai?`\n"
+            f"• `@tado Order Block aur liquidity sweep kaise spot karein?`\n\n"
+            f"Pucho bhai, bilkul ready hu! 🚀",
             chat_id=chat_id,
-            parse_mode="Markdown",
             reply_to_message_id=reply_to_message_id,
         )
         return
@@ -2686,15 +2682,8 @@ def handle_telegram_trading_question(
         live_context += f"\nContext from user's quoted/replied message:\n\"{replied_text[:400]}\"\n"
 
     ai_reply = ask_groq_trading_question(clean_q, live_context=live_context, user_name=display_name)
-    full_msg = f"🤖 *Tado AI:* \n━━━━━━━━━━━━━━━━━━━━\n{ai_reply}"
-
-    # Split if Telegram message limit (4096) is exceeded
-    if len(full_msg) > 4000:
-        chunks = [full_msg[i:i+3800] for i in range(0, len(full_msg), 3800)]
-        for chunk in chunks:
-            send_telegram(chunk, chat_id=chat_id, parse_mode="Markdown", reply_to_message_id=reply_to_message_id)
-    else:
-        send_telegram(full_msg, chat_id=chat_id, parse_mode="Markdown", reply_to_message_id=reply_to_message_id)
+    # Direct natural message without any robot badges or headers
+    send_telegram(ai_reply, chat_id=chat_id, reply_to_message_id=reply_to_message_id)
 
 
 def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict) -> None:
@@ -2716,6 +2705,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
 
     log.info("Telegram command listener active (listening for /ai, @ai, @tado, /charts, /scan, /status)...")
     processed_msg_keys: collections.deque[str] = collections.deque(maxlen=2000)
+    recent_text_cache: collections.deque[tuple[str, str, float]] = collections.deque(maxlen=1000)
 
     while not STOP.is_set():
         try:
@@ -2804,6 +2794,19 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 text = (msg.get("text") or "").strip()
                 if not text:
                     continue
+
+                # Content deduplication across channel & discussion group
+                now_ts = time.time()
+                norm_text = text.lower().strip()
+                is_duplicate_text = False
+                for prev_chat, prev_text, prev_time in recent_text_cache:
+                    if prev_text == norm_text and (now_ts - prev_time) < 20:
+                        is_duplicate_text = True
+                        break
+                if is_duplicate_text:
+                    log.info("Skipping duplicate mirrored message within 20s from chat %s: '%s'", chat_id, text)
+                    continue
+                recent_text_cache.append((chat_id, norm_text, now_ts))
 
                 log.info("Telegram incoming from chat %s ('%s', user '%s'): '%s'", chat_id, chat_title, user_name, text)
 
