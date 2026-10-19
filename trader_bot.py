@@ -580,6 +580,22 @@ def send_telegram_msg(
                     wait = 5
                 STOP.wait(min(wait, 60))
                 continue
+
+            if resp.status_code == 400:
+                err_text = resp.text.lower()
+                clean_payload = dict(payload)
+                retry_needed = False
+                if "entity" in err_text or "entities" in err_text or "parse_mode" in err_text:
+                    clean_payload.pop("parse_mode", None)
+                    retry_needed = True
+                if "reply" in err_text:
+                    clean_payload.pop("reply_to_message_id", None)
+                    clean_payload.pop("allow_sending_without_reply", None)
+                    retry_needed = True
+                if retry_needed:
+                    log.warning("Telegram send 400 recovery: retrying with safe fallback (err: %s)", resp.text[:120])
+                    resp = requests.post(url, json=clean_payload, timeout=REQUEST_TIMEOUT)
+
             resp.raise_for_status()
             res = resp.json()
             if res.get("ok"):
@@ -2515,15 +2531,14 @@ def ask_groq_trading_question(question: str, live_context: str = "") -> str:
         return "⚠️ Groq API key is not configured in `.env` (`GROQ_API_KEY`). Please configure it to get AI trading answers."
 
     system_prompt = (
-        "You are an elite institutional quantitative cryptocurrency analyst and Smart Money Concepts (ICT/SMC) trading mentor.\n"
-        "Your task is to answer user trading questions with high technical precision, practical clarity, and institutional risk management.\n\n"
-        "Core Trading Framework:\n"
-        "1. Smart Money Concepts: Liquidity Sweeps (BSL/SSL), Displacement (ATR expansion), Market Structure Shifts (MSS), Order Blocks (OB), and Fair Value Gaps (FVG).\n"
-        "2. Daily Key Levels: Previous Day High (PDH), Low (PDL), Open (PDO), Close (PDC).\n"
-        "3. Risk Management: Position sizing (1-2% max risk per trade), RR >= 2.0, precise invalidation (Stop Loss), and dynamic targets.\n"
-        "4. Tone: Professional, realistic, direct. If the user asks in Hindi or Hinglish, reply in clear, professional Hinglish. If in English, reply in English.\n"
-        "5. Keep the answer structured using bold headings, bullet points, and concise explanations so it reads beautifully on Telegram.\n"
-        "6. Always include a short risk disclaimer at the end."
+        "You are an expert, friendly, and elite cryptocurrency analyst, Smart Money Concepts (SMC) mentor, and trading assistant.\n"
+        "Your mission is to clearly and helpfully answer WHATEVER question the user asks.\n\n"
+        "Coverage Guidelines:\n"
+        "1. Broad Scope: Answer ANY question the user asks — including beginner guides (e.g. 'explain me crypto trading', 'what is bitcoin', 'how to start trading'), market basics, risk management, cryptocurrency concepts, indicators, Smart Money Concepts (liquidity sweeps, order blocks, FVG, MSS), live coin analysis, trading psychology, or general questions.\n"
+        "2. Language & Tone: Direct, encouraging, educational, and institutional. If the user asks in Hindi or Hinglish, answer in fluent, easy-to-understand Hinglish. If in English, answer in English.\n"
+        "3. Structure: Use clean formatting with clear headings, bullet points, and concise explanations. Keep paragraphs short and engaging for Telegram readers.\n"
+        "4. Risk Management: Emphasize capital preservation (1-2% risk per trade, stop loss discipline) where applicable.\n"
+        "5. Conclude with a short, friendly summary or disclaimer."
     )
 
     user_content = f"User Question: {question}"
@@ -2542,7 +2557,7 @@ def ask_groq_trading_question(question: str, live_context: str = "") -> str:
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.3,
-        "max_tokens": 800,
+        "max_tokens": 1000,
     }
 
     for attempt in range(2):
