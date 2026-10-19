@@ -549,6 +549,12 @@ def detect_setup(df: pd.DataFrame, symbol: str, price: float, cfg: StrategyConfi
 # =============================================================================
 # TELEGRAM
 # =============================================================================
+# Thread-safe global registries for Telegram message deduplication & self-echo suppression
+PROCESSED_TELEGRAM_KEYS: collections.deque = collections.deque(maxlen=5000)
+PROCESSED_KEYS_LOCK = threading.Lock()
+SENT_BOT_TEXTS: collections.deque = collections.deque(maxlen=1000)
+
+
 def telegram_configured() -> bool:
     return bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
 
@@ -600,7 +606,16 @@ def send_telegram_msg(
             resp.raise_for_status()
             res = resp.json()
             if res.get("ok"):
-                return res.get("result")
+                result_data = res.get("result", {})
+                mid = result_data.get("message_id")
+                cid = str(result_data.get("chat", {}).get("id") or target_chat)
+                if mid:
+                    with PROCESSED_KEYS_LOCK:
+                        PROCESSED_TELEGRAM_KEYS.append(f"{cid}_{mid}")
+                        SENT_BOT_TEXTS.append((cid, text.lower().strip(), time.time()))
+                preview = text[:70].replace("\n", " ")
+                log.info("Telegram SENT to %s: '%s' (msg_id: %s)", cid, preview, mid)
+                return result_data
             return None
         except requests.RequestException as exc:
             log.warning("Telegram send failed (attempt %d/3): %s", attempt + 1, scrub(exc))
@@ -687,6 +702,14 @@ def send_telegram_chart_alert(
                 STOP.wait(min(wait, 60))
                 continue
             if resp.status_code == 200:
+                try:
+                    res_p = resp.json().get("result", {})
+                    p_mid = res_p.get("message_id")
+                    if p_mid:
+                        with PROCESSED_KEYS_LOCK:
+                            PROCESSED_TELEGRAM_KEYS.append(f"{target_chat}_{p_mid}")
+                except Exception:
+                    pass
                 if followup_text:
                     sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
                     if not sent_f and parse_mode:
@@ -699,6 +722,14 @@ def send_telegram_chart_alert(
                 try:
                     retry_resp = requests.post(url, json=plain_payload, timeout=REQUEST_TIMEOUT)
                     if retry_resp.status_code == 200:
+                        try:
+                            res_rp = retry_resp.json().get("result", {})
+                            rp_mid = res_rp.get("message_id")
+                            if rp_mid:
+                                with PROCESSED_KEYS_LOCK:
+                                    PROCESSED_TELEGRAM_KEYS.append(f"{target_chat}_{rp_mid}")
+                        except Exception:
+                            pass
                         if followup_text:
                             sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
                             if not sent_f and parse_mode:
@@ -2679,6 +2710,7 @@ def handle_telegram_trading_question(
         live_context += f"\nContext from user's quoted/replied message:\n\"{replied_text[:400]}\"\n"
 
     ai_reply = ask_groq_trading_question(clean_q, live_context=live_context, user_name=display_name)
+    log.info("AI/Tado generated single reply for %s: '%s'", chat_id, ai_reply[:70].replace('\n', ' '))
     # Direct natural message without any robot badges or headers
     send_telegram(ai_reply, chat_id=chat_id, reply_to_message_id=reply_to_message_id)
 
@@ -2701,7 +2733,6 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
         pass
 
     log.info("Telegram command listener active (listening for /ai, @ai, @tado, /charts, /scan, /status)...")
-    processed_msg_keys: collections.deque[str] = collections.deque(maxlen=2000)
     recent_text_cache: collections.deque[tuple[str, str, float]] = collections.deque(maxlen=1000)
 
     while not STOP.is_set():
@@ -2729,24 +2760,34 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 # Ignore automatic forwards from linked channels into discussion groups to prevent double replies
                 if msg.get("is_automatic_forward"):
                     continue
+
+                # 1. Ignore any message from ANY bot (including our own bot)
+                user = msg.get("from", {})
+                if user.get("is_bot"):
+                    continue
+
+                bot_info = get_bot_info()
+                bot_id = bot_info.get("id")
+                if bot_id and user.get("id") == bot_id:
+                    continue
+
                 chat = msg.get("chat", {})
                 chat_id = str(chat.get("id"))
                 chat_type = chat.get("type", "private")  # "private", "group", "supergroup", "channel"
                 chat_title = chat.get("title") or "Trading Community"
-                user = msg.get("from", {})
                 user_id = user.get("id") or (int(chat_id) if chat_id.lstrip("-").isdigit() else None)
                 user_name = user.get("first_name") or user.get("username") or chat_title or "Trader"
                 message_id = msg.get("message_id")
                 if message_id:
                     msg_key = f"{chat_id}_{message_id}"
-                    if msg_key in processed_msg_keys:
-                        continue
-                    processed_msg_keys.append(msg_key)
+                    with PROCESSED_KEYS_LOCK:
+                        if msg_key in PROCESSED_TELEGRAM_KEYS:
+                            continue
+                        PROCESSED_TELEGRAM_KEYS.append(msg_key)
 
                 # --- 1. WELCOME NEW MEMBERS ---
                 new_members = msg.get("new_chat_members")
                 if new_members:
-                    bot_info = get_bot_info()
                     bot_id = bot_info.get("id")
                     for m in new_members:
                         if m.get("id") == bot_id:
@@ -2792,9 +2833,21 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 if not text:
                     continue
 
-                # Content deduplication across channel & discussion group
                 now_ts = time.time()
                 norm_text = text.lower().strip()
+
+                # Check if this text was recently sent by the bot itself (catches channel_post echoes)
+                is_own_echo = False
+                with PROCESSED_KEYS_LOCK:
+                    for s_cid, s_text, s_time in SENT_BOT_TEXTS:
+                        if s_cid == chat_id and s_text == norm_text and (now_ts - s_time) < 60:
+                            is_own_echo = True
+                            break
+                if is_own_echo:
+                    log.info("Skipping bot's own echoed text from chat %s: '%s'", chat_id, text[:60])
+                    continue
+
+                # Content deduplication across channel & discussion group
                 is_duplicate_text = False
                 for prev_chat, prev_text, prev_time in recent_text_cache:
                     if prev_text == norm_text and (now_ts - prev_time) < 20:
@@ -3486,39 +3539,21 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     cmd in ("/help", "help")
                 )
 
-                words_clean = [w.strip(",.!?#/@\"'").lower() for w in clean_lower.split()]
+                # Strict AI Tagging: In groups/channels, reply ONLY when explicitly tagged (@ai, @tado, @botusername, /ai, /ask)
                 is_ai_tagged = (
                     "@ai" in clean_lower
-                    or "#ai" in clean_lower
-                    or clean_lower.startswith("ai ")
-                    or clean_lower.startswith("ai,")
-                    or clean_lower.startswith("ai:")
-                    or clean_lower.startswith("/ai")
-                    or clean_lower.startswith("@ai")
-                    or ("ai" in words_clean[:3])
                     or "@tado" in clean_lower
-                    or "#tado" in clean_lower
-                    or clean_lower.startswith("tado ")
-                    or clean_lower.startswith("tado,")
-                    or clean_lower.startswith("tado:")
+                    or (bool(bot_username) and f"@{bot_username}" in clean_lower)
+                    or clean_lower.startswith("/ai")
+                    or clean_lower.startswith("/ask")
                     or clean_lower.startswith("/tado")
-                    or clean_lower.startswith("@tado")
-                    or ("tado" in words_clean[:3])
-                    or "@todo" in clean_lower
-                    or clean_lower.startswith("todo ")
-                    or ("todo" in words_clean[:3])
-                    or is_bot_tagged
-                    or is_reply_to_bot
-                    or cmd in ("/ask", "ask", "/ai", "ai", "/q", "q", "/tado", "tado")
-                    or clean_lower.startswith("/ask ")
-                    or clean_lower.startswith("ask ")
                 )
 
                 if is_chart_cmd:
                     log.info("Chart images requested by %s ('%s'), requested_sym=%s", chat_id, text, requested_chart_sym)
                     handle_telegram_charts(client, chat_id, requested_sym=requested_chart_sym)
                 elif is_ai_tagged or chat_type == "private":
-                    # User asked Tado / AI a trading question or casual conversational query
+                    # User explicitly tagged Tado / AI or sent direct 1-on-1 private message
                     replied_txt = reply_to_msg.get("text") if reply_to_msg else None
                     log.info("AI/Tado tagged query from %s (%s): '%s'", chat_id, chat_type, text)
                     handle_telegram_trading_question(
