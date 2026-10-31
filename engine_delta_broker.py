@@ -64,10 +64,24 @@ DEFAULT_CONTRACT_SPECS = {
 
 class DeltaTestnetBroker:
     def __init__(self) -> None:
-        self.base_url = os.getenv("DELTA_BASE_URL", "https://testnet-api.delta.exchange").rstrip("/")
+        raw_url = os.getenv("DELTA_BASE_URL", "https://testnet-api.delta.exchange").rstrip("/")
         self.api_key = os.getenv("DELTA_API_KEY", "").strip()
         self.api_secret = os.getenv("DELTA_API_SECRET", "").strip()
         self.enabled = os.getenv("DELTA_TESTNET_ENABLED", "false").lower() in ("true", "1", "yes")
+
+        # Auto-align URL if testnet is enabled but production URL was provided (or vice versa)
+        if self.enabled:
+            if "testnet" in raw_url and not self.enabled:
+                log.info("[DeltaBroker] DELTA_BASE_URL is testnet but DELTA_TESTNET_ENABLED is False.")
+            elif "testnet" not in raw_url and self.enabled and "india" not in raw_url and "api.delta" in raw_url:
+                log.warning("[DeltaBroker] CAUTION: DELTA_TESTNET_ENABLED=True but DELTA_BASE_URL (%s) is production!", raw_url)
+
+            # Auto-disable if keys are completely missing
+            if not self.api_key or not self.api_secret:
+                log.warning("[DeltaBroker] DELTA_TESTNET_ENABLED is True, but DELTA_API_KEY or DELTA_API_SECRET is missing. Disabling live broker execution.")
+                self.enabled = False
+
+        self.base_url = raw_url
         self._product_cache: Dict[str, int] = dict(DEFAULT_PRODUCT_MAP)
         self._time_offset: int = 0  # Seconds to add to local time to align with Delta server clock
         self._last_request_time: float = 0.0

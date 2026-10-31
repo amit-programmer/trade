@@ -453,6 +453,20 @@ def validate_system_prerequisites() -> bool:
     if not TIMEFRAMES:
         errors.append("TIMEFRAMES list is empty. Provide valid intervals (e.g. 15m, 5m, 1h)")
 
+    # 4. Check Delta Testnet Broker Credentials if enabled
+    if os.getenv("DELTA_TESTNET_ENABLED", "false").lower() in ("true", "1", "yes"):
+        d_key = os.getenv("DELTA_API_KEY", "").strip()
+        d_sec = os.getenv("DELTA_API_SECRET", "").strip()
+        d_url = os.getenv("DELTA_BASE_URL", "").strip()
+        if not d_key or not d_sec:
+            log.warning("⚠️ DELTA_TESTNET_ENABLED=true but DELTA_API_KEY or DELTA_API_SECRET is missing. Live orders will be disabled; paper trading remains active.")
+        elif "testnet" not in d_url and "api.delta.exchange" in d_url and "india" not in d_url:
+            log.warning("⚠️ DELTA_TESTNET_ENABLED=true but DELTA_BASE_URL is pointing to production (%s). Verify URL in .env!", d_url)
+
+    # 5. Check Telegram Chat ID formatting warning
+    if TELEGRAM_CHAT_ID and not (TELEGRAM_CHAT_ID.lstrip("-").isdigit() or TELEGRAM_CHAT_ID.startswith("@")):
+        log.warning("⚠️ TELEGRAM_CHAT_ID '%s' appears malformed (expected numeric ID like 6459170074 or -100... or @channel).", TELEGRAM_CHAT_ID)
+
     if errors:
         sys.stderr.write("=" * 68 + "\n")
         sys.stderr.write("PRE-FLIGHT CONFIGURATION VALIDATION FAILED:\n")
@@ -1039,6 +1053,7 @@ def send_telegram_chart_alert(
         return send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=reply_markup)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    is_local_file = bool(photo_url and not photo_url.startswith(("http://", "https://")) and Path(photo_url).is_file())
 
     # Telegram sendPhoto caption maximum length is 1024 characters
     if len(caption) > 1020:
@@ -1055,22 +1070,42 @@ def send_telegram_chart_alert(
         photo_buttons = reply_markup
         followup_buttons = None
 
-    payload: Dict[str, Any] = {
-        "chat_id": target_chat,
-        "photo": photo_url,
-        "caption": photo_caption,
-    }
-    if parse_mode:
-        payload["parse_mode"] = parse_mode
-    if reply_to_message_id:
-        payload["reply_to_message_id"] = reply_to_message_id
-        payload["allow_sending_without_reply"] = True
-    if photo_buttons:
-        payload["reply_markup"] = photo_buttons
-
     for attempt in range(3):
         try:
-            resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+            if is_local_file:
+                with open(photo_url, "rb") as f_img:
+                    data_dict: Dict[str, Any] = {
+                        "chat_id": target_chat,
+                        "caption": photo_caption,
+                    }
+                    if parse_mode:
+                        data_dict["parse_mode"] = parse_mode
+                    if reply_to_message_id:
+                        data_dict["reply_to_message_id"] = reply_to_message_id
+                        data_dict["allow_sending_without_reply"] = True
+                    if photo_buttons:
+                        data_dict["reply_markup"] = json.dumps(photo_buttons)
+                    resp = requests.post(
+                        url,
+                        data=data_dict,
+                        files={"photo": (Path(photo_url).name, f_img, "image/png")},
+                        timeout=REQUEST_TIMEOUT,
+                    )
+            else:
+                payload: Dict[str, Any] = {
+                    "chat_id": target_chat,
+                    "photo": photo_url,
+                    "caption": photo_caption,
+                }
+                if parse_mode:
+                    payload["parse_mode"] = parse_mode
+                if reply_to_message_id:
+                    payload["reply_to_message_id"] = reply_to_message_id
+                    payload["allow_sending_without_reply"] = True
+                if photo_buttons:
+                    payload["reply_markup"] = photo_buttons
+                resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+
             if resp.status_code == 429:
                 try:
                     wait = int(resp.json().get("parameters", {}).get("retry_after", 5))
@@ -1094,26 +1129,17 @@ def send_telegram_chart_alert(
                 return True
             elif resp.status_code == 400 and parse_mode:
                 log.info("sendPhoto 400 with parse_mode=%s; retrying photo with plain text caption...", parse_mode)
-                plain_payload = dict(payload)
-                plain_payload.pop("parse_mode", None)
-                try:
-                    retry_resp = requests.post(url, json=plain_payload, timeout=REQUEST_TIMEOUT)
-                    if retry_resp.status_code == 200:
-                        try:
-                            res_rp = retry_resp.json().get("result", {})
-                            rp_mid = res_rp.get("message_id")
-                            if rp_mid:
-                                with PROCESSED_KEYS_LOCK:
-                                    PROCESSED_TELEGRAM_KEYS.append(f"{target_chat}_{rp_mid}")
-                        except Exception:
-                            pass
-                        if followup_text:
-                            sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=followup_buttons)
-                            if not sent_f and parse_mode:
+                if not is_local_file:
+                    plain_payload = dict(payload)
+                    plain_payload.pop("parse_mode", None)
+                    try:
+                        retry_resp = requests.post(url, json=plain_payload, timeout=REQUEST_TIMEOUT)
+                        if retry_resp.status_code == 200:
+                            if followup_text:
                                 send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id, reply_markup=followup_buttons)
-                        return True
-                except Exception as exc:
-                    log.warning("Retry sendPhoto without parse_mode failed: %s", scrub(exc))
+                            return True
+                    except Exception as exc:
+                        log.warning("Retry sendPhoto without parse_mode failed: %s", scrub(exc))
             else:
                 log.warning("Telegram sendPhoto returned HTTP %d: %s (attempt %d/3)", resp.status_code, scrub(resp.text), attempt + 1)
         except requests.RequestException as exc:
@@ -1502,9 +1528,6 @@ def generate_and_upload_chart(
     if not mpf:
         log.warning("mplfinance not installed; skipping chart generation.")
         return None
-    if not cloudinary_configured():
-        log.info("Cloudinary not configured (CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET); skipping chart upload.")
-        return None
 
     try:
         # Take the last 65 candles for clear structural context
@@ -1748,20 +1771,33 @@ def generate_and_upload_chart(
         plt.close(fig)
         buf.seek(0)
 
-        # Upload directly to Cloudinary
-        public_id = f"{chart_sym}_{chart_tf}_{int(time.time())}"
-        upload_result = cloudinary.uploader.upload(
-            buf,
-            folder="crypto_trading_charts",
-            public_id=public_id,
-            resource_type="image",
-            overwrite=True,
-        )
-        secure_url = upload_result.get("secure_url")
-        log.info("High-precision chart generated and uploaded to Cloudinary: %s", secure_url)
-        return secure_url
+        # Upload directly to Cloudinary if configured; otherwise save local file for Telegram upload
+        local_chart_path = BASE_DIR / f"chart_{chart_sym}_{chart_tf}.png"
+        if cloudinary_configured():
+            try:
+                public_id = f"{chart_sym}_{chart_tf}_{int(time.time())}"
+                upload_result = cloudinary.uploader.upload(
+                    buf,
+                    folder="crypto_trading_charts",
+                    public_id=public_id,
+                    resource_type="image",
+                    overwrite=True,
+                )
+                secure_url = upload_result.get("secure_url")
+                if secure_url:
+                    log.info("High-precision chart generated and uploaded to Cloudinary: %s", secure_url)
+                    return secure_url
+            except Exception as c_err:
+                log.warning("Cloudinary upload failed (%s). Saving locally for direct Telegram upload.", scrub(c_err))
+
+        # Local PNG buffer save (direct Telegram multipart photo upload fallback)
+        buf.seek(0)
+        with open(local_chart_path, "wb") as f_img:
+            f_img.write(buf.read())
+        log.info("Chart saved locally: %s (direct Telegram upload active)", local_chart_path.name)
+        return str(local_chart_path)
     except Exception as exc:
-        log.warning("Chart generation or Cloudinary upload failed: %s", scrub(exc))
+        log.warning("Chart generation failed: %s", scrub(exc))
         return None
 
 
@@ -1899,7 +1935,8 @@ def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]
                          parsed.get("trade_pick"), parsed.get("setup_grade"), parsed.get("confidence_score"), parsed.get("market_regime"))
                 return parsed
             elif resp.status_code in (429, 503):
-                log.warning("Groq rate limit/service unavailable (HTTP %s). Backing off 2s before retry (attempt %d/2)...", resp.status_code, attempt + 1)
+                log.warning("Groq rate limit/service unavailable (HTTP %s). Switching model to 'llama-3.1-8b-instant' for fast retry (attempt %d/2)...", resp.status_code, attempt + 1)
+                payload["model"] = "llama-3.1-8b-instant"
                 time.sleep(2)
                 continue
             else:
@@ -1907,6 +1944,7 @@ def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]
                 break
         except Exception as exc:
             log.warning("Groq API request failed (attempt %d/2): %s", attempt + 1, scrub(exc))
+            payload["model"] = "llama-3.1-8b-instant"
             time.sleep(2)
 
     # Groq AI Rate-Limit (429) & Exception Shield: Return safe fallback Grade C / SKIP
@@ -2227,9 +2265,25 @@ class SheetsLogger:
             gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_FILE)
             log.info("Connected to Google Sheets via %s", GOOGLE_CREDENTIALS_FILE)
 
-        self.sh = gc.open_by_key(GOOGLE_SHEET_ID) if GOOGLE_SHEET_ID else gc.open(GOOGLE_SHEET_NAME)
-        self.ws_cache = {}
-        log.info("Connected to Google Sheet: %s", self.sh.title)
+        try:
+            self.sh = gc.open_by_key(GOOGLE_SHEET_ID) if GOOGLE_SHEET_ID else gc.open(GOOGLE_SHEET_NAME)
+            self.ws_cache = {}
+            log.info("Connected to Google Sheet: %s", self.sh.title)
+        except Exception as sheet_err:
+            err_msg = str(sheet_err)
+            if "403" in err_msg or "PERMISSION_DENIED" in err_msg:
+                sa_email = "your-service-account@iam.gserviceaccount.com"
+                try:
+                    if GOOGLE_CREDENTIALS_JSON:
+                        sa_email = json.loads(GOOGLE_CREDENTIALS_JSON).get("client_email", sa_email)
+                except Exception:
+                    pass
+                log.error(
+                    "⚠️ GOOGLE SHEET PERMISSION DENIED (403): The service account does not have access to this sheet!\n"
+                    "👉 FIX: Open your Google Sheet, click 'Share' (top right), and add '%s' with 'Editor' permissions.",
+                    sa_email
+                )
+            raise
 
     def _worksheet(self, tab: str):
         if tab in self.ws_cache:
@@ -3496,6 +3550,10 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                 "allowed_updates": json.dumps(["message", "channel_post", "my_chat_member", "chat_member", "callback_query"]),
             }
             resp = requests.get(url, params=params, timeout=20)
+            if resp.status_code == 409:
+                log.warning("⚠️ Telegram Conflict (409): Another process is polling Telegram with this bot token! Backing off 15s...")
+                STOP.wait(15)
+                continue
             if resp.status_code != 200:
                 STOP.wait(3)
                 continue

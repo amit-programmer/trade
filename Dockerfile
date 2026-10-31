@@ -28,7 +28,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Create a non-privileged user and setup data files
 RUN useradd -m -u 1001 botuser && \
     mkdir -p /app && \
-    touch /app/trader_bot.log /app/bot_state.json /app/heartbeat.json /app/paper_positions.json && \
+    touch /app/trader_bot.log /app/bot_state.json /app/heartbeat.json /app/paper_positions.json /app/crash_dump.json && \
+    chmod 666 /app/trader_bot.log /app/bot_state.json /app/heartbeat.json /app/paper_positions.json /app/crash_dump.json && \
     chown -R botuser:botuser /app
 
 # Copy application code and modular engines

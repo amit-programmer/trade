@@ -28,6 +28,7 @@ trader_bot.log
 *.tmp
 .tmp
 scratch/
+chart_*.png
 
 # =============================================================================
 # PYTHON ENVIRONMENTS & ARTIFACTS
