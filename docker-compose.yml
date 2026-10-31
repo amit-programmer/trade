@@ -13,6 +13,8 @@ services:
       # Persist state and logs across container updates and restarts
       - ./bot_state.json:/app/bot_state.json
       - ./trader_bot.log:/app/trader_bot.log
+      - ./heartbeat.json:/app/heartbeat.json
+      - ./paper_positions.json:/app/paper_positions.json
       # Uncomment if using credentials.json instead of GOOGLE_CREDENTIALS_JSON in .env:
       # - ./credentials.json:/app/credentials.json:ro
     logging:

@@ -28,14 +28,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Create a non-privileged user and setup data files
 RUN useradd -m -u 1001 botuser && \
     mkdir -p /app && \
-    touch /app/trader_bot.log /app/bot_state.json && \
+    touch /app/trader_bot.log /app/bot_state.json /app/heartbeat.json /app/paper_positions.json && \
     chown -R botuser:botuser /app
 
-# Copy application code
-COPY trader_bot.py /app/
+# Copy application code and modular engines
+COPY *.py /app/
 
 # Switch to non-root user
 USER botuser
+
+# Docker Healthcheck instruction for autonomous auto-restart
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 CMD python trader_bot.py --health || exit 1
 
 # Default command
 CMD ["python", "trader_bot.py"]

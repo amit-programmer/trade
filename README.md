@@ -90,23 +90,24 @@ Yeh bot crypto markets (Binance Spot) ko multi-pair aur multi-timeframe par 24/7
 ```mermaid
 flowchart TD
     A[Binance Public REST API] -->|Closed OHLCV Candles| B[Market Ingestion Engine]
-    B --> C{Liquidity Sweep?}
+    B --> C{Liquidity Sweep + MSS?}
     C -- No --> B
-    C -- Yes --> D{Displacement & MSS?}
-    D -- No --> B
-    D -- Yes --> E{Order Block Retest?}
-    E -- No --> B
-    E -- Yes --> F[Setup Detected]
+    C -- Yes --> D[Order Block Retest Detected]
     
-    F --> G[Groq AI Quantitative Analysis\nQwen 27B Model]
-    G --> H{AI Grade >= B+ & Score >= 60?}
-    H -- No --> I[Log Low Confidence Skip\nState Updated]
-    H -- Yes --> J[Mplfinance Chart Generator]
+    D --> E[Time Machine Monte Carlo 10k Simulations]
+    D --> F[Dynamic Risk & Budget Sizing]
+    D --> G[3-Tier Exit Plan & Breakeven Rule]
+    D --> H[Whale OI & Fear-Greed Macro Filter]
     
-    J --> K[Cloudinary CDN Upload]
-    K --> L[Telegram Photo Alert\nInteractive Notification]
-    L --> M[Google Sheets Cloud Sync\nAlerts Tab]
-    M --> N[State Saved to bot_state.json]
+    E & F & G & H --> I[Groq AI Quantitative Evaluation\nQwen 27B Model]
+    I --> J{AI Grade >= B+ & Odds >= 40%?}
+    J -- No --> K[Log Low Confidence Skip]
+    J -- Yes --> L[Mplfinance Candlestick Chart]
+    
+    L --> M[Cloudinary CDN Upload]
+    M --> N[Telegram Alert with Interactive Buttons\nApprove / Reject Paper Trade]
+    N --> O[Paper Broker Execution Engine\npaper_positions.json]
+    N --> P[Google Sheets Sync\nAlerts & Paper Trading PnL]
 ```
 
 ---
@@ -115,20 +116,30 @@ flowchart TD
 
 ```bash
 trade/
-├── trader_bot.py         # Main application: Scanner, SMC Strategy, AI Engine, Telegram Bot
-├── requirements.txt      # Python package dependencies
-├── .env.example          # Template with all environment variables & explanations
-├── .gitignore            # Git rules preventing secrets from leaking
-├── Dockerfile            # Production Docker container image definition
-├── docker-compose.yml    # One-command container deployment orchestration
-├── .dockerignore         # Excludes local environments & secrets from Docker image
-├── Procfile              # PaaS process file (Railway, Render, Fly.io, Heroku)
-├── runtime.txt           # Declares Python 3.11.9 runtime for PaaS
-├── trader-bot.service    # Linux Systemd unit file for 24/7 VPS daemon
-├── deploy.sh             # Automation shell script for Linux VPS setup and control
-├── bot_state.json        # Persistent bot state & deduplication (created at runtime)
-├── trader_bot.log        # Rotating log file (created at runtime)
-└── README.md             # Complete institutional project documentation
+├── trader_bot.py            # Main application: Scanner, SMC Strategy, Groq AI, Telegram Bot
+├── server.py                # FastAPI ASGI REST API & Institutional Web Dashboard (Port 8000)
+├── engine_timemachine.py    # Time Machine: Monte Carlo 10,000-run probability simulator
+├── engine_risk_budget.py    # Risk Budget Manager: Exact coin quantity & max loss calculation
+├── engine_exit_manager.py   # Multi-Target Dynamic Exit & Breakeven Manager (TP1/TP2/TP3)
+├── engine_entry_watcher.py  # Micro-Timeframe (1m) Bar-by-Bar Rejection Wick Watcher
+├── engine_macro_filter.py   # Crypto Fear & Greed sentiment & macro event filter
+├── engine_whale_tracker.py  # Smart Money / Whale Derivatives flow & Open Interest tracker
+├── engine_paper_broker.py   # Paper Broker: Interactive trade execution & virtual PnL tracking
+├── engine_delta_broker.py   # Delta Exchange (Testnet / Live) execution broker (HMAC-SHA256)
+├── paper_positions.json     # Persistent active & closed virtual trades (created at runtime)
+├── requirements.txt         # Python package dependencies
+├── .env.example             # Template with all environment variables & explanations
+├── .gitignore               # Git rules preventing secrets from leaking
+├── Dockerfile               # Production Docker container image definition
+├── docker-compose.yml       # One-command container deployment orchestration
+├── .dockerignore           # Excludes local environments & secrets from Docker image
+├── Procfile                 # PaaS process file (Railway, Render, Fly.io, Heroku)
+├── runtime.txt              # Declares Python 3.11.9 runtime for PaaS
+├── trader-bot.service       # Linux Systemd unit file for 24/7 VPS daemon
+├── deploy.sh                # Automation shell script for Linux VPS setup and control
+├── bot_state.json           # Persistent bot state & deduplication (created at runtime)
+├── trader_bot.log           # Rotating log file (created at runtime)
+└── README.md                # Complete institutional project documentation
 ```
 
 ---
@@ -142,6 +153,10 @@ Aap apne Telegram chat se bot ko direct control aur query kar sakte hain. Bot sl
 |---|---|---|
 | `/charts` ya `chart image` | `chart dikhao`, `all charts` | Sabhi monitored pairs ke live candlestick charts with **PD-OHLC** levels & Groq AI suggestions send karta hai. |
 | `chart <symbol>` | `chart btc`, `chart eth`, `chart sol` | Specific crypto pair ka single detailed chart image generate karke bhejta hai. |
+| `/paper` | `paper trades`, `portfolio` | Active virtual trades, floating PnL, auto-BE status aur closed trade history report karta hai. |
+| `/bias` ya `/screener` | `market bias`, `screener` | Multi-pair 4H market structure, PDH/PDL breakdown aur institutional directional bias table display karta hai. |
+| `/whales` ya `/oi` | `whale flow`, `open interest` | Binance Futures Open Interest, liquidations aur Top Trader Long/Short ratio show karta hai. |
+| `/sentiment` ya `/macro` | `fear greed`, `macro events` | Real-time Crypto Fear & Greed Index score aur upcoming high-impact economic buffer status deta hai. |
 | `@ai <question>` / `/ask` | `@ai BTC buy karein ya wait?`, `ai OB kya hai?` | User ke message ko direct **Reply** karke **Groq AI (Qwen 27B)** se institutional analysis deta hai. Kisi message ko reply karke `@ai` likhne par us message ka context bhi analyze karta hai. |
 | `what are doing` | `kya kar rahe ho`, `report` | Detailed bot activity report, monitored levels, open market bias, aur real-time state deta hai. |
 | `/scan` ya `scan` | `scan now`, `check market` | Instant on-demand sweep & Order Block scan run karta hai. |

@@ -19,8 +19,15 @@ credentials.json
 # BOT RUNTIME DATA & LOGS
 # =============================================================================
 bot_state.json
-*.log
+heartbeat.json
+crash_dump.json
+paper_positions.json
+paper_positions_history.json
+*.log*
 trader_bot.log
+*.tmp
+.tmp
+scratch/
 
 # =============================================================================
 # PYTHON ENVIRONMENTS & ARTIFACTS

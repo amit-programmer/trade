@@ -76,11 +76,23 @@ try:
 except ImportError:
     cloudinary = None
 
+# --- Day Trader Skill Quantitative Engines ---
+from engine_timemachine import run_monte_carlo_simulation
+from engine_risk_budget import RiskBudgetManager
+from engine_exit_manager import generate_exit_plan, check_trade_stage
+from engine_entry_watcher import check_micro_entry
+from engine_macro_filter import get_crypto_sentiment, check_macro_event_block
+from engine_whale_tracker import get_whale_derivatives_data
+from engine_paper_broker import PAPER_BROKER, PaperBroker
+from engine_delta_broker import DELTA_BROKER, DeltaTestnetBroker
+
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 BASE_DIR = Path(__file__).resolve().parent
+RISK_MGR = RiskBudgetManager.from_env()
+
 
 
 def env_str(name: str, default: str = "") -> str:
@@ -167,6 +179,8 @@ SHEET_QUEUE_MAX = 2000
 
 STATE_FILE = Path(env_str("STATE_FILE", str(BASE_DIR / "bot_state.json")))
 LOG_FILE = Path(env_str("LOG_FILE", str(BASE_DIR / "trader_bot.log")))
+HEARTBEAT_FILE = Path(env_str("HEARTBEAT_FILE", str(BASE_DIR / "heartbeat.json")))
+CRASH_DUMP_FILE = Path(env_str("CRASH_DUMP_FILE", str(BASE_DIR / "crash_dump.json")))
 
 # Day boundaries / timestamps use this timezone (IANA name), default UTC.
 TZ_NAME = env_str("TIMEZONE", "UTC")
@@ -221,7 +235,7 @@ CFG = StrategyConfig(
 )
 
 # =============================================================================
-# LOGGING / SHUTDOWN
+# LOGGING / SHUTDOWN / EXCEPTION HOOKS
 # =============================================================================
 log = logging.getLogger("trader_bot")
 STOP = threading.Event()
@@ -229,7 +243,75 @@ SCANNING_ACTIVE = threading.Event()
 SCANNING_ACTIVE.set()
 
 
+def record_critical_crash(exc_type, exc_value, exc_traceback, thread_name: str = "MainThread") -> None:
+    """
+    Unhandled Thread Exception Shield & Crash Alert:
+    Captures unhandled exceptions across main and background threads, dumps detailed stack trace
+    to crash_dump.json, and dispatches an emergency Telegram alert before exiting.
+    """
+    import traceback
+    ts_iso = datetime.now(timezone.utc).isoformat()
+    tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+
+    crash_data = {
+        "timestamp": ts_iso,
+        "thread_name": thread_name,
+        "exception_type": getattr(exc_type, "__name__", str(exc_type)),
+        "exception_message": scrub(str(exc_value)),
+        "traceback": scrub(tb_str),
+    }
+
+    try:
+        temp_file = CRASH_DUMP_FILE.with_suffix(".tmp")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(crash_data, f, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(temp_file, CRASH_DUMP_FILE)
+    except Exception as d_exc:
+        sys.stderr.write(f"Could not write crash_dump.json: {d_exc}\n")
+
+    log.critical("UNHANDLED CRITICAL CRASH in [%s]: %s\n%s", thread_name, scrub(str(exc_value)), scrub(tb_str))
+
+    try:
+        if telegram_configured():
+            alert_text = (
+                f"🚨 *CRITICAL BOT CRASH ALERT*\n\n"
+                f"• *Thread:* `{thread_name}`\n"
+                f"• *Type:* `{crash_data['exception_type']}`\n"
+                f"• *Error:* `{crash_data['exception_message']}`\n"
+                f"• *Time:* `{ts_iso}`\n\n"
+                f"Traceback dumped to `crash_dump.json`. Bot will exit for supervisor restart."
+            )
+            send_telegram(alert_text, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+def setup_exception_hooks() -> None:
+    """Binds unhandled exception handlers to sys.excepthook and threading.excepthook."""
+    def _sys_excepthook(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        record_critical_crash(exc_type, exc_value, exc_traceback, thread_name="MainThread")
+
+    def _threading_excepthook(args):
+        if issubclass(args.exc_type, KeyboardInterrupt):
+            return
+        thread_name = getattr(args.thread, "name", "BackgroundThread")
+        record_critical_crash(args.exc_type, args.exc_value, args.exc_traceback, thread_name=thread_name)
+
+    sys.excepthook = _sys_excepthook
+    if hasattr(threading, "excepthook"):
+        threading.excepthook = _threading_excepthook
+
+
 def setup_logging() -> None:
+    setup_exception_hooks()
     if sys.platform == "win32":
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -241,16 +323,160 @@ def setup_logging() -> None:
     console.setFormatter(fmt)
     log.addHandler(console)
     try:
-        fileh = RotatingFileHandler(LOG_FILE, maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        # Rotating File Handler: Max 10MB per file with 3 backup rotations to preserve disk space
+        fileh = RotatingFileHandler(LOG_FILE, maxBytes=10_000_000, backupCount=3, encoding="utf-8")
         fileh.setFormatter(fmt)
         log.addHandler(fileh)
     except OSError as exc:  # read-only FS etc. - console logging still works
         log.warning("Could not open log file %s: %s", LOG_FILE, exc)
 
 
+def update_daemon_heartbeat(status: str = "ACTIVE") -> None:
+    """
+    Atomically updates heartbeat.json with ISO UTC timestamp, active open trade count,
+    and today's net realized loss for systemd watchdog or external health monitoring.
+    """
+    try:
+        open_count = len(PAPER_BROKER.get_open_positions())
+        daily_loss = PAPER_BROKER.get_today_realized_loss_usd()
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "open_trades": open_count,
+            "daily_loss": daily_loss,
+        }
+        temp_file = HEARTBEAT_FILE.with_suffix(".tmp")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(temp_file, HEARTBEAT_FILE)
+    except Exception as exc:
+        log.warning("Could not update daemon heartbeat: %s", exc)
+
+
+def run_health_check(max_age_seconds: int = 120) -> int:
+    """
+    Standalone Health Check CLI for Docker HEALTHCHECK & Systemd Watchdog:
+    Inspects heartbeat.json.
+    - If heartbeat timestamp <= 120s and status == 'ACTIVE': prints HEALTHY and returns 0.
+    - If heartbeat is stale, missing, corrupt, or status != 'ACTIVE': prints UNHEALTHY and returns 1.
+    """
+    if not HEARTBEAT_FILE.exists():
+        sys.stderr.write("UNHEALTHY: heartbeat.json not found (daemon may not be running)\n")
+        return 1
+
+    try:
+        with open(HEARTBEAT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        ts_str = data.get("timestamp")
+        status = data.get("status")
+        open_trades = data.get("open_trades", 0)
+        daily_loss = data.get("daily_loss", 0.0)
+
+        if not ts_str:
+            sys.stderr.write("UNHEALTHY: heartbeat.json missing timestamp\n")
+            return 1
+
+        ts_str_clean = ts_str.replace("Z", "+00:00")
+        beat_time = datetime.fromisoformat(ts_str_clean)
+        now_utc = datetime.now(timezone.utc)
+        age = (now_utc - beat_time).total_seconds()
+
+        if status != "ACTIVE":
+            sys.stderr.write(f"UNHEALTHY: Daemon status is '{status}' (expected 'ACTIVE')\n")
+            return 1
+
+        if age > max_age_seconds:
+            sys.stderr.write(f"UNHEALTHY: Stale heartbeat (last beat was {age:.1f}s ago > {max_age_seconds}s limit)\n")
+            return 1
+
+        print(f"HEALTHY: Daemon ACTIVE (last beat: {age:.1f}s ago | open: {open_trades} | daily loss: ${daily_loss:,.2f})")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"UNHEALTHY: Failed to parse heartbeat.json: {exc}\n")
+        return 1
+
+
+def validate_system_prerequisites() -> bool:
+    """
+    Pre-Flight Configuration & System Prerequisite Validator:
+    Verifies write permissions on critical disk files and numeric sanity of .env variables before bot startup.
+    Returns True if healthy; otherwise prints descriptive errors and returns False.
+    """
+    errors: List[str] = []
+
+    # 1. Verify Disk Write Permissions
+    critical_paths = [
+        BASE_DIR / "bot_state.json",
+        BASE_DIR / "paper_positions.json",
+        HEARTBEAT_FILE,
+        LOG_FILE,
+    ]
+    for p in critical_paths:
+        target_dir = p.parent
+        if not os.access(target_dir, os.W_OK):
+            errors.append(f"Write permission denied for directory: {target_dir}")
+        else:
+            test_tmp = target_dir / f".write_test_{int(time.time()*1000)}.tmp"
+            try:
+                with open(test_tmp, "w", encoding="utf-8") as f:
+                    f.write("test")
+                test_tmp.unlink(missing_ok=True)
+            except Exception as w_exc:
+                errors.append(f"Cannot write file in {target_dir}: {w_exc}")
+
+    # 2. Check Numeric Environment Variables
+    env_checks = [
+        ("MAX_CONCURRENT_TRADES", os.getenv("MAX_CONCURRENT_TRADES", "3"), int, lambda v: v > 0, "must be a positive integer > 0"),
+        ("MAX_DAILY_LOSS_USD", os.getenv("MAX_DAILY_LOSS_USD", "50.0"), float, lambda v: v > 0, "must be a positive number > 0"),
+        ("SCAN_INTERVAL_SECONDS", os.getenv("SCAN_INTERVAL_SECONDS", "60"), int, lambda v: v >= 5, "must be an integer >= 5 seconds"),
+        ("ACCOUNT_BALANCE", os.getenv("ACCOUNT_BALANCE", "1000.0"), float, lambda v: v > 0, "must be a positive number > 0"),
+        ("MAX_LOSS_PER_TRADE_USD", os.getenv("MAX_LOSS_PER_TRADE_USD", "20.0"), float, lambda v: v > 0, "must be a positive number > 0"),
+        ("MAX_DAILY_TRADES", os.getenv("MAX_DAILY_TRADES", "5"), int, lambda v: v > 0, "must be a positive integer > 0"),
+    ]
+    for name, raw_val, val_type, validator, rule in env_checks:
+        try:
+            parsed = val_type(raw_val)
+            if not validator(parsed):
+                errors.append(f"Invalid value for {name}='{raw_val}': {rule}")
+        except (ValueError, TypeError):
+            errors.append(f"Failed to parse {name}='{raw_val}': must be valid {val_type.__name__}")
+
+    # 3. Check Symbols and Timeframes
+    if not SYMBOLS:
+        errors.append("SYMBOLS list is empty. Provide at least one valid trading pair (e.g. BTCUSDT)")
+    if not TIMEFRAMES:
+        errors.append("TIMEFRAMES list is empty. Provide valid intervals (e.g. 15m, 5m, 1h)")
+
+    if errors:
+        sys.stderr.write("=" * 68 + "\n")
+        sys.stderr.write("PRE-FLIGHT CONFIGURATION VALIDATION FAILED:\n")
+        for err in errors:
+            sys.stderr.write(f"  ❌ {err}\n")
+        sys.stderr.write("=" * 68 + "\n")
+        log.error("Pre-flight system validation failed with %d errors.", len(errors))
+        return False
+
+    log.info("Pre-flight validation passed: Disk write permissions and numeric environment verified.")
+    return True
+
+
 def _handle_signal(signum, _frame) -> None:
-    log.info("Signal %s received - shutting down after current step...", signum)
+    log.info("Signal %s received - shutting down gracefully...", signum)
     STOP.set()
+    try:
+        update_daemon_heartbeat(status="SHUTDOWN")
+    except Exception:
+        pass
+    try:
+        PAPER_BROKER.shutdown()
+    except Exception:
+        pass
 
 
 def scrub(text: Any) -> str:
@@ -282,6 +508,62 @@ def fmt_ts(dt: datetime) -> str:
 
 
 # =============================================================================
+# NETWORK CIRCUIT BREAKER (AUTO-RECOVERY & BACKOFF)
+# =============================================================================
+class NetworkCircuitBreaker:
+    """
+    Lightweight Network Outage Circuit Breaker & Auto-Recovery.
+    Prevents thread freezes and rapid-fire retry storms during exchange maintenance,
+    DNS drops, or connection drops.
+    Applies incremental exponential backoff: 5s -> 15s -> 30s -> 60s (capped).
+    Resets backoff timer to 0 immediately upon connection recovery.
+    """
+    def __init__(self, name: str = "Feed", max_backoff: float = 60.0):
+        self.name = name
+        self.consecutive_failures = 0
+        self.max_backoff = float(max_backoff)
+        self.last_failure_time = 0.0
+
+    def record_failure(self, error: Any = None) -> float:
+        self.consecutive_failures += 1
+        self.last_failure_time = time.time()
+        if self.consecutive_failures == 1:
+            backoff = 5.0
+        elif self.consecutive_failures == 2:
+            backoff = 15.0
+        elif self.consecutive_failures == 3:
+            backoff = 30.0
+        else:
+            backoff = min(self.max_backoff, 60.0)
+        log.warning(
+            "[%s Circuit Breaker] Outage/failure #%d (%s). Backing off for %.1fs...",
+            self.name, self.consecutive_failures, error, backoff
+        )
+        return backoff
+
+    def record_success(self) -> None:
+        if self.consecutive_failures > 0:
+            log.info(
+                "[%s Circuit Breaker] Connection restored after %d failures. Resuming normal cadence.",
+                self.name, self.consecutive_failures
+            )
+            self.consecutive_failures = 0
+
+    def get_sleep_duration(self, base_interval: float = 10.0) -> float:
+        base = max(1.0, float(base_interval))
+        if self.consecutive_failures == 0:
+            return base
+        elif self.consecutive_failures == 1:
+            return max(base, 5.0)
+        elif self.consecutive_failures == 2:
+            return max(base, 15.0)
+        elif self.consecutive_failures == 3:
+            return max(base, 30.0)
+        else:
+            return max(base, self.max_backoff)
+
+
+# =============================================================================
 # BINANCE PUBLIC API CLIENT
 # =============================================================================
 class BinanceError(Exception):
@@ -295,6 +577,7 @@ class BinanceClient:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "trader-bot/1.0"})
         self.idx = 0
+        self.last_fetch_times: Dict[str, float] = {}
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
         last_err: Optional[Exception] = None
@@ -349,11 +632,73 @@ class BinanceClient:
         now_ms = int(time.time() * 1000)
         df = df[df["close_time"].astype("int64") < now_ms].copy()  # keep CLOSED candles only
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        now_s = time.time()
+        df.attrs["fetched_at"] = now_s
+        df.attrs["timeframe"] = interval
+        if not df.empty and "close_time" in df.columns:
+            df.attrs["last_close_time_ms"] = int(df.iloc[-1]["close_time"])
+        self.last_fetch_times[symbol] = now_s
+        self.last_fetch_times[f"{symbol}_{interval}"] = now_s
         return df.reset_index(drop=True)
 
     def price(self, symbol: str) -> float:
         data = self._get("/api/v3/ticker/price", {"symbol": symbol})
-        return float(data["price"])
+        p = float(data["price"])
+        self.last_fetch_times[symbol] = time.time()
+        return p
+
+
+def verify_market_data_freshness(
+    symbol: str,
+    df: Optional[pd.DataFrame] = None,
+    client: Optional[Any] = None,
+    max_age_seconds: float = 180.0,
+    data_timestamp: Optional[float] = None,
+) -> tuple[bool, str]:
+    """
+    Stale Data & Timestamp Sanity Guard:
+    Verifies that the candle or ticker timestamp is not older than max_age_seconds (default 180s = 3 minutes).
+    If public data feed lag is detected, skips execution with 'SKIPPED: STALE_MARKET_DATA' to prevent ghost trades.
+    """
+    now = time.time()
+
+    # 1. Direct explicit data timestamp check (ticker or candle timestamp)
+    if data_timestamp is not None:
+        age = now - float(data_timestamp)
+        if age > max_age_seconds:
+            return False, f"SKIPPED: STALE_MARKET_DATA ({symbol} data age {age:.1f}s > {max_age_seconds:g}s limit)"
+
+    # 2. DataFrame candle timestamp / fetch metadata check
+    if df is not None and not df.empty:
+        fetched_at = getattr(df, "attrs", {}).get("fetched_at")
+        if fetched_at is not None:
+            age = now - float(fetched_at)
+            if age > max_age_seconds:
+                return False, f"SKIPPED: STALE_MARKET_DATA ({symbol} candle fetch age {age:.1f}s > {max_age_seconds:g}s limit)"
+
+        # Check last closed candle timestamp for sub-5m intervals
+        if "close_time" in df.columns:
+            try:
+                last_close_val = df.iloc[-1]["close_time"]
+                last_close_ms = int(last_close_val)
+                last_close_s = last_close_ms / 1000.0 if last_close_ms > 1e11 else float(last_close_ms)
+                tf = getattr(df, "attrs", {}).get("timeframe", "")
+                if tf in ("1s", "1m", "3m"):
+                    candle_age = now - last_close_s
+                    if candle_age > (max_age_seconds + 60.0):
+                        return False, f"SKIPPED: STALE_MARKET_DATA ({symbol} candle close age {candle_age:.1f}s > {max_age_seconds:g}s limit)"
+            except Exception:
+                pass
+
+    # 3. Client fetch time check
+    if client is not None and hasattr(client, "last_fetch_times"):
+        last_ts = client.last_fetch_times.get(symbol)
+        if last_ts is not None:
+            age = now - float(last_ts)
+            if age > max_age_seconds:
+                return False, f"SKIPPED: STALE_MARKET_DATA ({symbol} ticker price age {age:.1f}s > {max_age_seconds:g}s limit)"
+
+    return True, "OK"
 
 
 # =============================================================================
@@ -381,6 +726,12 @@ class Setup:
     ai_insight: Optional[str] = None
     ai_data: Optional[Dict[str, Any]] = None  # Full structured JSON from Groq
     chart_url: Optional[str] = None           # Cloudinary uploaded chart URL
+    sim_data: Optional[Dict[str, Any]] = None   # Monte Carlo simulation stats
+    risk_data: Optional[Dict[str, Any]] = None  # Position sizing & budget calculations
+    exit_plan: Optional[Dict[str, Any]] = None  # 3-tier dynamic exit plan
+    macro_data: Optional[Dict[str, Any]] = None # Crypto Fear & Greed sentiment
+    whale_data: Optional[Dict[str, Any]] = None # Derivatives OI & Top Trader Ratio
+    micro_entry: Optional[Dict[str, Any]] = None # 1m micro-timeframe rejection check
 
     @property
     def key(self) -> str:
@@ -564,6 +915,7 @@ def send_telegram_msg(
     chat_id: Optional[str] = None,
     parse_mode: Optional[str] = None,
     reply_to_message_id: Optional[int] = None,
+    reply_markup: Optional[Dict[str, Any]] = None,
 ) -> Optional[dict]:
     target_chat = chat_id or TELEGRAM_CHAT_ID
     if not (TELEGRAM_TOKEN and target_chat):
@@ -576,6 +928,8 @@ def send_telegram_msg(
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
         payload["allow_sending_without_reply"] = True
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
 
     for attempt in range(3):
         try:
@@ -628,8 +982,23 @@ def send_telegram(
     chat_id: Optional[str] = None,
     parse_mode: Optional[str] = None,
     reply_to_message_id: Optional[int] = None,
+    reply_markup: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    return bool(send_telegram_msg(text, chat_id=chat_id, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id))
+    return bool(send_telegram_msg(text, chat_id=chat_id, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=reply_markup))
+
+
+def telegram_edit_reply_markup(chat_id: str, message_id: int, reply_markup: Optional[Dict[str, Any]] = None) -> bool:
+    """Updates the inline keyboard of an existing Telegram message (e.g. after button click)."""
+    if not TELEGRAM_TOKEN:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup"
+    payload = {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup or {"inline_keyboard": []}}
+    try:
+        r = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+        return bool(r.status_code == 200 and r.json().get("ok"))
+    except Exception as exc:
+        log.warning("editMessageReplyMarkup error: %s", scrub(exc))
+        return False
 
 
 def send_telegram_chat_action(chat_id: Optional[str] = None, action: str = "typing") -> None:
@@ -650,14 +1019,16 @@ def send_telegram_chart_alert(
     chat_id: Optional[str] = None,
     parse_mode: Optional[str] = "Markdown",
     reply_to_message_id: Optional[int] = None,
+    reply_markup: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Sends a photo alert via Telegram sendPhoto using the Cloudinary image URL.
     Includes robust fallback:
       - If photo_url is missing or sendPhoto fails, falls back to text-only send_telegram().
       - Safely handles Telegram's 1024-character caption limit by sending main summary on photo
-        and full breakdown in a follow-up message if needed.
+        and full breakdown in a follow-up message with the interactive buttons.
       - Supports reply_to_message_id to quote the requesting user's message in groups.
+      - Supports interactive inline keyboards via reply_markup.
     """
     target_chat = chat_id or TELEGRAM_CHAT_ID
     if not (TELEGRAM_TOKEN and target_chat):
@@ -665,7 +1036,7 @@ def send_telegram_chart_alert(
         return False
 
     if not photo_url:
-        return send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
+        return send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=reply_markup)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
 
@@ -674,11 +1045,15 @@ def send_telegram_chart_alert(
         cutoff = caption.rfind("\n", 0, 950)
         if cutoff == -1:
             cutoff = 950
-        photo_caption = caption[:cutoff] + "\n\n_...Full AI institutional details below 👇_"
+        photo_caption = caption[:cutoff] + "\n\n_...Full AI institutional details & trade buttons below 👇_"
         followup_text = caption[cutoff:].strip()
+        photo_buttons = None
+        followup_buttons = reply_markup
     else:
         photo_caption = caption
         followup_text = None
+        photo_buttons = reply_markup
+        followup_buttons = None
 
     payload: Dict[str, Any] = {
         "chat_id": target_chat,
@@ -690,6 +1065,8 @@ def send_telegram_chart_alert(
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
         payload["allow_sending_without_reply"] = True
+    if photo_buttons:
+        payload["reply_markup"] = photo_buttons
 
     for attempt in range(3):
         try:
@@ -711,9 +1088,9 @@ def send_telegram_chart_alert(
                 except Exception:
                     pass
                 if followup_text:
-                    sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
+                    sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=followup_buttons)
                     if not sent_f and parse_mode:
-                        send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id)
+                        send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id, reply_markup=followup_buttons)
                 return True
             elif resp.status_code == 400 and parse_mode:
                 log.info("sendPhoto 400 with parse_mode=%s; retrying photo with plain text caption...", parse_mode)
@@ -731,9 +1108,9 @@ def send_telegram_chart_alert(
                         except Exception:
                             pass
                         if followup_text:
-                            sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
+                            sent_f = send_telegram(followup_text, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=followup_buttons)
                             if not sent_f and parse_mode:
-                                send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id)
+                                send_telegram(followup_text, chat_id=target_chat, reply_to_message_id=reply_to_message_id, reply_markup=followup_buttons)
                         return True
                 except Exception as exc:
                     log.warning("Retry sendPhoto without parse_mode failed: %s", scrub(exc))
@@ -745,10 +1122,11 @@ def send_telegram_chart_alert(
 
     # Fallback mechanism: send standard text alert so alerts are NEVER missed
     log.info("sendPhoto failed; falling back to standard text alert.")
-    sent = send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id)
+    sent = send_telegram(caption, chat_id=target_chat, parse_mode=parse_mode, reply_to_message_id=reply_to_message_id, reply_markup=reply_markup)
     if not sent and parse_mode:
-        sent = send_telegram(caption, chat_id=target_chat, reply_to_message_id=reply_to_message_id)
+        sent = send_telegram(caption, chat_id=target_chat, reply_to_message_id=reply_to_message_id, reply_markup=reply_markup)
     return sent
+
 
 
 # =============================================================================
@@ -1411,8 +1789,10 @@ def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]
         "You MUST evaluate the market regime before validating the setup:\n"
         "- Market Regime must be one of: TRENDING_BULLISH, TRENDING_BEARISH, RANGING, CHOPPY.\n"
         "- In a RANGING regime: Sweeps of range highs/lows into opposing order blocks are prime setups.\n"
-        "- In a TRENDING regime: Favor trend-aligned continuation sweeps. Downgrade counter-trend sweeps to 'B' or 'C' with verdict REJECT and trade_pick 'NO - SKIP TRADE' unless strong multi-timeframe reversal divergence exists.\n"
-        "- In a CHOPPY regime: Downgrade to 'C' or 'D' with verdict REJECT and trade_pick 'NO - SKIP TRADE' due to false breakout and whipsaw risk.\n\n"
+        "You MUST integrate the Time Machine (Monte Carlo 10,000 permutations) empirical odds into your decision:\n"
+        "- If empirical Win Probability >= 55% with Positive Edge: reinforce 'A' or 'A+' grade and verdict APPROVE.\n"
+        "- If empirical Win Probability < 45% or Negative Edge: downgrade to 'C' or 'D' and verdict REJECT with trade_pick 'NO - SKIP TRADE' because mathematical edge is absent.\n"
+        "- If Whale Derivatives show heavy opposing positioning (e.g. >70% opposite flow), factor exhaustion liquidation risk.\n\n"
         "You MUST calculate dynamic risk parameters:\n"
         "- suggested_entry: exact optimal entry level inside or at the Order Block.\n"
         "- suggested_sl: dynamic Stop Loss placed beyond the sweep wick extreme using 1.0x to 1.5x ATR buffer.\n"
@@ -1442,20 +1822,55 @@ def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]
     )
 
     atr_pct = (setup.atr / setup.price * 100) if setup.price else 0.0
-    user_prompt = (
-        f"Asset: {setup.symbol}\n"
-        f"Direction: {setup.direction}\n"
-        f"Timeframe: {setup.timeframe}\n"
-        f"Current Price: {fmt_price(setup.price)}\n"
-        f"Swept Level: {fmt_price(setup.sweep_level)} (Wick Extreme: {fmt_price(setup.sweep_extreme)})\n"
-        f"Order Block Zone: {fmt_price(setup.ob_low)} - {fmt_price(setup.ob_high)}\n"
-        f"ATR(14): {fmt_price(setup.atr)} ({atr_pct:.2f}%)\n"
-        f"HTF Structure (4h/1h): {setup.htf_bias or 'Not available'}\n"
-        f"Confluence: {setup.confluence or 'Standard Setup'}\n"
-        f"Retest Status: {'Price currently inside OB zone' if setup.retest == 'live' else 'Last closed candle wicked into OB'}\n"
-        f"Proposed Ref Entry: {fmt_price(setup.entry)} | SL: {fmt_price(setup.stop)} | TP: {fmt_price(setup.target)} (R:R {CFG.rr:g})\n"
-        f"Timestamp: {fmt_ts(now)}"
-    )
+    user_prompt_parts = [
+        f"Asset: {setup.symbol}",
+        f"Direction: {setup.direction}",
+        f"Timeframe: {setup.timeframe}",
+        f"Current Price: {fmt_price(setup.price)}",
+        f"Swept Level: {fmt_price(setup.sweep_level)} (Wick Extreme: {fmt_price(setup.sweep_extreme)})",
+        f"Order Block Zone: {fmt_price(setup.ob_low)} - {fmt_price(setup.ob_high)}",
+        f"ATR(14): {fmt_price(setup.atr)} ({atr_pct:.2f}%)",
+        f"HTF Structure (4h/1h): {setup.htf_bias or 'Not available'}",
+        f"Confluence: {setup.confluence or 'Standard Setup'}",
+        f"Retest Status: {'Price currently inside OB zone' if setup.retest == 'live' else 'Last closed candle wicked into OB'}",
+        f"Proposed Ref Entry: {fmt_price(setup.entry)} | SL: {fmt_price(setup.stop)} | TP: {fmt_price(setup.target)} (R:R {CFG.rr:g})",
+    ]
+
+    if setup.sim_data and setup.sim_data.get("simulations", 0) > 0:
+        sim = setup.sim_data
+        user_prompt_parts.append(
+            f"Time Machine Monte Carlo Simulation (10,000 runs):\n"
+            f"- Target Win Probability: {sim.get('target_win_prob')}\n"
+            f"- Stop Loss Probability: {sim.get('stop_loss_prob')}\n"
+            f"- Historical Edge: {sim.get('edge')} ({sim.get('verdict')})"
+        )
+
+    if setup.risk_data and setup.risk_data.get("status") == "PASS":
+        r = setup.risk_data
+        user_prompt_parts.append(
+            f"Dynamic Risk & Budget Sizing:\n"
+            f"- Risk-Reward: {r.get('risk_reward_ratio')}\n"
+            f"- Position Sizing: {r.get('quantity_str')} units (~${r.get('max_loss_usd')} max risk)\n"
+            f"- Capital Required: ${r.get('capital_required_usd'):,.2f}"
+        )
+
+    if setup.whale_data:
+        w = setup.whale_data
+        user_prompt_parts.append(
+            f"Whale & Derivatives Flow:\n"
+            f"- Top Trader Positioning: {w.get('top_traders_long_pct')} Long / {w.get('top_traders_short_pct')} Short\n"
+            f"- Derivatives Assessment: {w.get('flow_summary')}"
+        )
+
+    if setup.macro_data and setup.macro_data.get("status") == "OK":
+        m = setup.macro_data
+        user_prompt_parts.append(
+            f"Macro Sentiment:\n"
+            f"- Fear & Greed Score: {m.get('score')}/100 ({m.get('classification')})"
+        )
+
+    user_prompt_parts.append(f"Timestamp: {fmt_ts(now)}")
+    user_prompt = "\n".join(user_prompt_parts)
 
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
@@ -1483,8 +1898,8 @@ def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]
                          setup.symbol, setup.direction, setup.timeframe,
                          parsed.get("trade_pick"), parsed.get("setup_grade"), parsed.get("confidence_score"), parsed.get("market_regime"))
                 return parsed
-            elif resp.status_code == 429:
-                log.warning("Groq rate limit (429). Pausing before retry...")
+            elif resp.status_code in (429, 503):
+                log.warning("Groq rate limit/service unavailable (HTTP %s). Backing off 2s before retry (attempt %d/2)...", resp.status_code, attempt + 1)
                 time.sleep(2)
                 continue
             else:
@@ -1492,9 +1907,30 @@ def generate_ai_insight(setup: Setup, now: datetime) -> Optional[Dict[str, Any]]
                 break
         except Exception as exc:
             log.warning("Groq API request failed (attempt %d/2): %s", attempt + 1, scrub(exc))
-            time.sleep(1)
+            time.sleep(2)
 
-    return None
+    # Groq AI Rate-Limit (429) & Exception Shield: Return safe fallback Grade C / SKIP
+    log.warning("GROQ_RATE_LIMITED_SKIPPED: Groq API unavailable or rate-limited. Applying safe fallback Grade C / SKIP.")
+    return {
+        "trade_pick": "NO - SKIP TRADE",
+        "trade_pick_reason": "AI evaluation bypassed due to Groq rate limit / service outage (GROQ_RATE_LIMITED_SKIPPED).",
+        "setup_grade": "C",
+        "confidence_score": 30,
+        "verdict": "REJECT",
+        "market_regime": "CHOPPY",
+        "regime_analysis": "Automated safe fallback active: Groq rate limit shield.",
+        "dynamic_risk": {
+            "suggested_entry": setup.entry,
+            "suggested_sl": setup.stop,
+            "suggested_tp": setup.target,
+            "risk_reward_ratio": round(abs(setup.target - setup.entry) / max(abs(setup.entry - setup.stop), 1e-6), 2),
+            "sl_tp_rationale": "Default technical bounds (Groq rate-limit shield active)",
+        },
+        "liquidity_target": "N/A",
+        "actionable_bias": "SKIP TRADE",
+        "ai_suggestion_for_trade": "GROQ_RATE_LIMITED_SKIPPED: Setup safely bypassed under rate limit protection.",
+        "summary_rationale": "Fallback triggered by Groq rate-limit shield to ensure zero-crash pipeline continuity.",
+    }
 
 
 def is_high_confidence_setup(ai_data: Optional[Dict[str, Any]]) -> bool:
@@ -1649,6 +2085,42 @@ def format_alert(s: Setup, now: datetime, is_high_conf: bool = True) -> str:
     if s.confluence:
         lines.append(f"📊 *Confluence:* {s.confluence}")
 
+    if s.sim_data and s.sim_data.get("simulations", 0) > 0:
+        sim = s.sim_data
+        lines.append("")
+        lines.append("⏳ *Time Machine Simulation (10,000 Replays):*")
+        lines.append(f"• Win Odds: `{sim.get('target_win_prob')}` | Stop Odds: `{sim.get('stop_loss_prob')}` | Open: `{sim.get('unresolved_prob')}`")
+        lines.append(f"• Regime Edge: *{sim.get('edge')}* (`{sim.get('verdict')}`)")
+
+    if s.risk_data and s.risk_data.get("status") == "PASS":
+        r = s.risk_data
+        lines.append("")
+        lines.append("💰 *Dynamic Risk & Position Sizing:*")
+        lines.append(f"• Sizing: `{r.get('quantity_str')} {s.symbol.replace('USDT', '')}` (~${r.get('max_loss_usd'):g} Max Risk)")
+        lines.append(f"• Capital Required: `${r.get('capital_required_usd'):,.2f}` | RR: `{r.get('risk_reward_ratio')}`")
+
+    if s.exit_plan:
+        ep = s.exit_plan
+        lines.append("")
+        lines.append("🎯 *3-Tier Dynamic Exit Strategy:*")
+        lines.append(f"• TP1 (1.5R): `${ep['tp1']['price']:,.4f}` (50% Locked + Move Stop to BE)")
+        lines.append(f"• TP2 ({ep['tp2']['target_r']}R): `${ep['tp2']['price']:,.4f}` (30% Locked)")
+        lines.append(f"• TP3 (Runner): `${ep['tp3']['price']:,.4f}` (20% Trailed)")
+
+    if s.micro_entry and s.micro_entry.get("status") == "TRIGGERED":
+        lines.append("")
+        lines.append(f"⚡ *Micro-Entry Watcher (1m):* `{s.micro_entry.get('pattern')}` (Wick: `{s.micro_entry.get('rejection_wick_size')}`)")
+
+    if s.whale_data or s.macro_data:
+        m_parts = []
+        if s.whale_data:
+            m_parts.append(f"Whale: {s.whale_data.get('flow_summary')}")
+        if s.macro_data and s.macro_data.get("status") == "OK":
+            m_parts.append(f"Sentiment: Fear & Greed {s.macro_data.get('score')} ({s.macro_data.get('classification')})")
+        if m_parts:
+            lines.append("")
+            lines.append(f"🌊 *Smart Money Flow & Sentiment:* {' | '.join(m_parts)}")
+
     if s.ai_data:
         lines.append("")
         lines.append("🤖 *Groq AI Institutional Analysis (Qwen 27B):*")
@@ -1692,6 +2164,10 @@ SHEET_HEADERS = {
         "Setup Grade", "Confidence Score", "Market Regime",
         "Dynamic Entry", "Dynamic Stop Loss", "Dynamic Take Profit", "Risk Reward",
         "Liquidity Target", "Actionable Plan & Invalidation", "Chart URL"
+    ],
+    "Paper Trading PnL": [
+        "Timestamp", "Trade ID", "Symbol", "Direction", "Entry Price",
+        "Exit Price", "Quantity", "Realized PnL ($)", "Realized R", "Exit Outcome", "Duration"
     ],
     "Daily Summary": [
         "Date", "Scan Cycles", "Errors", "Assets Scanned", "Market Status (day change)",
@@ -1903,13 +2379,26 @@ def build_daily_row(day: str, stats: dict) -> list:
             " | ".join(parts) or "no data", bias, len(alerts), "; ".join(alerts) or "None"]
 
 
-def roll_day_if_needed(state: dict, now: datetime) -> None:
+def roll_day_if_needed(state: dict, now: datetime, client: Optional[BinanceClient] = None) -> None:
     today = now.strftime("%Y-%m-%d")
     if state["day"] and state["day"] != today and state["stats"]["scans"] > 0:
         row = build_daily_row(state["day"], state["stats"])
         queue_row(state, "Daily Summary", row)
         log.info("Day rollover: queued daily summary for %s", state["day"])
+
+        # Day Trader Skill: Post Morning Daily Bias Screener to Telegram
+        if client and telegram_configured():
+            try:
+                screener_msg = generate_daily_bias_screener(client)
+                send_telegram(screener_msg, parse_mode="Markdown")
+            except Exception as s_exc:
+                log.warning("Daily morning screener dispatch failed: %s", s_exc)
+
         state["stats"] = new_stats()
+        try:
+            RISK_MGR.reset_daily_trades()
+        except Exception:
+            pass
     state["day"] = today
     cutoff = time.time() - 3 * 86400   # forget alert keys older than 3 days
     state["alerted"] = {k: t for k, t in state["alerted"].items() if t > cutoff}
@@ -1923,7 +2412,107 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
     log.info("SETUP %s %s (%s) | price %s | OB %s-%s", setup.symbol, setup.direction, setup.timeframe,
              fmt_price(setup.price), fmt_price(setup.ob_low), fmt_price(setup.ob_high))
 
-    # 1. Fetch structured Groq AI insight (JSON mode)
+    # 0a. Capital Preservation Guards: Max Concurrent Open Trades & Daily Drawdown Hard-Stop
+    open_count = len(PAPER_BROKER.get_open_positions())
+    today_loss = PAPER_BROKER.get_today_realized_loss_usd()
+    can_open, risk_block_reason = RISK_MGR.can_open_trade(open_count, today_loss)
+    if not can_open:
+        log.warning("Setup %s %s skipped: %s", setup.symbol, setup.direction, risk_block_reason)
+        state["alerted"][setup.key] = time.time()
+        return None
+
+    # 0b. Stale Data & Timestamp Sanity Guard (3 minutes = 180s)
+    is_fresh, freshness_msg = verify_market_data_freshness(setup.symbol, df=df, client=client, max_age_seconds=180.0)
+    if not is_fresh:
+        log.warning("%s on %s %s. Halting order trigger.", freshness_msg, setup.symbol, setup.direction)
+        return None
+
+    # 0c. Check 30-Minute High-Impact Macro Economic Event Buffer
+    macro_block = check_macro_event_block(buffer_pre_min=30, buffer_post_min=15)
+    if macro_block.get("is_blocked"):
+        log.warning("High-Impact Macro Event active: %s. Skipping setup execution on %s %s.",
+                    macro_block.get("event_name"), setup.symbol, setup.direction)
+        warn_msg = (
+            f"⚠️ *SETUP BLOCKED BY MACRO EVENT BUFFER: {setup.symbol} ({setup.direction})*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Event:* `{macro_block.get('event_name')}` ({macro_block.get('timing')})\n"
+            f"• *Reason:* _{macro_block.get('reason')}_\n"
+            f"• *Policy:* Day Trader Rule enforces 30m pre-announcement block against high slippage.\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+        send_telegram(warn_msg, parse_mode="Markdown")
+        state["alerted"][setup.key] = time.time()
+        return None
+
+    # 1. Run Time Machine (Monte Carlo Simulator - 10,000 runs)
+    try:
+        sim_results = run_monte_carlo_simulation(
+            df if df is not None else [],
+            entry_price=setup.entry,
+            stop_loss=setup.stop,
+            take_profit=setup.target,
+            direction=setup.direction,
+            simulations=10000,
+        )
+        setup.sim_data = sim_results
+    except Exception as exc:
+        log.warning("Time Machine Monte Carlo simulation failed: %s", exc)
+
+    # 2. Calculate Dynamic Risk & Budget Sizing
+    try:
+        risk_data = RISK_MGR.calculate_position(
+            entry=setup.entry,
+            stop_loss=setup.stop,
+            target=setup.target,
+            symbol=setup.symbol,
+            current_open_count=open_count,
+            today_realized_loss=today_loss,
+        )
+        setup.risk_data = risk_data
+    except Exception as exc:
+        log.warning("Risk budget calculation failed: %s", exc)
+
+    # 3. Generate Multi-Target Dynamic Exit Plan (TP1, TP2, TP3 runner, BE)
+    try:
+        exit_plan = generate_exit_plan(
+            entry=setup.entry,
+            stop_loss=setup.stop,
+            direction=setup.direction,
+            target=setup.target,
+        )
+        setup.exit_plan = exit_plan
+    except Exception as exc:
+        log.warning("Exit plan generation failed: %s", exc)
+
+    # 4. Fetch Smart Money Whale Derivatives & Macro Sentiment
+    try:
+        setup.macro_data = get_crypto_sentiment()
+    except Exception:
+        pass
+    try:
+        setup.whale_data = get_whale_derivatives_data(setup.symbol)
+    except Exception:
+        pass
+
+    # 4b. Micro-Timeframe (1m) Entry Watcher check
+    if client:
+        try:
+            df_1m = client.klines(setup.symbol, "1m", 10)
+            if df_1m is not None and len(df_1m) > 0:
+                last_1m = df_1m.iloc[-1]
+                m_check = check_micro_entry(
+                    current_1m_candle=last_1m,
+                    ob_low=setup.ob_low,
+                    ob_high=setup.ob_high,
+                    direction=setup.direction,
+                )
+                setup.micro_entry = m_check
+                if m_check.get("status") == "TRIGGERED":
+                    setup.confluence = f"🎯 1m Micro-Wick Confirmed | {setup.confluence or ''}".strip(" |")
+        except Exception as exc:
+            log.warning("Micro-entry 1m check failed: %s", exc)
+
+    # 5. Fetch structured Groq AI insight (JSON mode with Qwen 27B)
     ai_data = generate_ai_insight(setup, now)
     setup.ai_data = ai_data
     setup.ai_insight = format_ai_insight_text(ai_data) if ai_data else None
@@ -1951,15 +2540,42 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
     liq_target = ai_data.get("liquidity_target", "N/A") if ai_data else "N/A"
     actionable = ai_data.get("actionable_bias", "N/A") if ai_data else "N/A"
 
-    # 2. Check setup confidence level (High vs Caution)
+    # 6. Check setup confidence level (High vs Caution)
     is_high_conf = is_high_confidence_setup(ai_data)
     setup_status = f"Grade {grade} ({score}/100)" if ai_data else "Raw Strategy Setup"
 
-    # 3. Always dispatch Telegram Photo Alert with full AI suggestions and chart!
+    # Register pending paper trade & generate Interactive Telegram Buttons
+    trade_id = f"{setup.symbol}_{int(time.time())}"
+    if setup.exit_plan and setup.risk_data and setup.risk_data.get("status") == "PASS":
+        registered = PAPER_BROKER.register_pending_setup(
+            trade_id=trade_id,
+            symbol=setup.symbol,
+            direction=setup.direction,
+            timeframe=setup.timeframe,
+            entry_price=float(dyn_entry),
+            stop_loss=float(dyn_sl),
+            target=float(dyn_tp),
+            quantity=setup.risk_data.get("quantity", 1.0),
+            max_loss_usd=setup.risk_data.get("max_loss_usd", 20.0),
+            exit_plan=setup.exit_plan,
+            ai_grade=grade,
+            sim_win_prob=setup.sim_data.get("target_win_prob", "N/A") if setup.sim_data else "N/A",
+        )
+        if registered:
+            reply_markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "🟢 Approve Paper Trade", "callback_data": f"paper_approve_{trade_id}"},
+                        {"text": "🔴 Reject / Skip", "callback_data": f"paper_reject_{trade_id}"},
+                    ]
+                ]
+            }
+
+    # 7. Always dispatch Telegram Photo Alert with full AI suggestions, Monte Carlo odds, and buttons!
     msg = format_alert(setup, now, is_high_conf=is_high_conf)
-    sent = send_telegram_chart_alert(msg, photo_url=chart_url, parse_mode="Markdown")
+    sent = send_telegram_chart_alert(msg, photo_url=chart_url, parse_mode="Markdown", reply_markup=reply_markup)
     if not sent and telegram_configured():
-        sent = send_telegram(msg)        # retry plain text without parse_mode if Markdown parsing failed
+        sent = send_telegram(msg, reply_markup=reply_markup)        # retry plain text without parse_mode if Markdown parsing failed
         if not sent:
             log.warning("Alert for %s (%s) not delivered - will retry next cycle.", setup.symbol, setup.timeframe)
             return None
@@ -1970,7 +2586,7 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
         desc += f" [Pick: {pick} | Grade {grade}]"
     state["stats"]["alerts"].append(desc)
 
-    # 4. Queue row in Google Sheets "Alerts" tab
+    # 8. Queue row in Google Sheets "Alerts" tab
     queue_row(state, "Alerts", [
         fmt_ts(now), setup.symbol, setup.timeframe, setup.direction,
         f"Liquidity Sweep + OB Retest [{setup_status}]",
@@ -1983,7 +2599,7 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
         chart_url or "N/A",
     ])
 
-    # 5. Queue in dedicated "AI Trade Suggestions" tab
+    # 9. Queue in dedicated "AI Trade Suggestions" tab
     queue_row(state, "AI Trade Suggestions", [
         fmt_ts(now), setup.symbol, setup.timeframe, setup.direction, round(setup.price, 6),
         pick, pick_reason, suggestion,
@@ -1999,7 +2615,7 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
     if not SCANNING_ACTIVE.is_set():
         return
     now = datetime.now(LOCAL_TZ)
-    roll_day_if_needed(state, now)
+    roll_day_if_needed(state, now, client=client)
     stats = state["stats"]
     stats["scans"] += 1
 
@@ -2094,13 +2710,149 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
             ", ".join(triggered) or "None", status,
         ])
 
+    # Day Trader Skill: Check open paper positions against latest prices
+    if prices:
+        try:
+            paper_events = PAPER_BROKER.update_positions(prices)
+            for pe in paper_events:
+                send_telegram(pe["message"], parse_mode="Markdown")
+                if pe.get("type") in ("TP3_HIT", "STOP_HIT", "BE_HIT", "STALE_ALERT"):
+                    td = pe.get("trade_data", {})
+                    queue_row(state, "Paper Trading PnL", [
+                        fmt_ts(now),
+                        pe.get("trade_id", "N/A"),
+                        pe.get("symbol", "N/A"),
+                        pe.get("direction", "N/A"),
+                        round(float(td.get("entry_price", 0)), 6),
+                        round(float(pe.get("exit_price", 0)), 6),
+                        td.get("quantity", 0),
+                        round(float(pe.get("total_pnl_usd", 0)), 2),
+                        round(float(pe.get("realized_r", 0)), 2),
+                        pe.get("exit_reason", "N/A"),
+                        f"{int((time.time() - float(td.get('opened_at', time.time()))) // 60)} mins",
+                    ])
+        except Exception as p_exc:
+            log.warning("Paper position update error: %s", p_exc)
+
     flush_sheet_queue(state, sheets)
     save_state(state)
+    update_daemon_heartbeat(status="ACTIVE")
 
 
 # =============================================================================
 # TELEGRAM ON-DEMAND INTERACTIVE LISTENER (/start, /scan, /status)
 # =============================================================================
+def generate_daily_bias_screener(client: BinanceClient) -> str:
+    """
+    Day Trader Skill: Multi-Pair Daily Bias Screener Table (/screener, /bias).
+    Evaluates 4H Structure, Daily Bias (Price vs PDH/PDL),
+    and Nearest Liquidity Targets for all monitored pairs.
+    """
+    lines = [
+        "📊 *INSTITUTIONAL MULTI-PAIR DAILY BIAS SCREENER*",
+        f"📅 Time: `{datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M %Z')}`",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for sym in SYMBOLS:
+        try:
+            cur_price = client.price(sym)
+            pdo, pdh, pdl, pdc = get_daily_levels(client, sym)
+            df_4h = client.klines(sym, "4h", 40)
+            trend_4h = compute_trend(df_4h) if df_4h is not None else "NEUTRAL"
+
+            # Determine Daily Bias relative to PDH / PDL
+            if pdh and cur_price > pdh:
+                bias = "🟢 LONG (Above PDH - Expansion)"
+                target = "Equal Highs / HTF Resistance"
+                status = "Watching 15m/5m OB Retest"
+            elif pdl and cur_price < pdl:
+                bias = "🔴 SHORT (Below PDL - Discount Sweep)"
+                target = "Equal Lows / HTF Support"
+                status = "Watching 15m/5m OB Retest"
+            elif pdh and pdl:
+                mid = (pdh + pdl) / 2
+                if cur_price >= mid:
+                    bias = "🟡 PREMIUM (Above 50% Equilibrium)"
+                    target = f"PDH `${pdh:,.2f}`"
+                else:
+                    bias = "🟢 DISCOUNT (Below 50% Equilibrium)"
+                    target = f"PDL `${pdl:,.2f}`"
+                status = "Range-Bound Setup Hunt"
+            else:
+                bias = "NEUTRAL"
+                target = "Local Equilibrium"
+                status = "Active Scanning"
+
+            t_ico = "🟢" if "BULL" in trend_4h else ("🔴" if "BEAR" in trend_4h else "🟡")
+            pdh_str = f"${pdh:,.2f}" if pdh else "N/A"
+            pdl_str = f"${pdl:,.2f}" if pdl else "N/A"
+            lines.append(
+                f"🔹 *{sym}* | Price: `${cur_price:,.2f}`\n"
+                f"  • *4H Trend:* {t_ico} `{trend_4h}`\n"
+                f"  • *Daily Bias:* {bias}\n"
+                f"  • *Nearest Target:* {target}\n"
+                f"  • *PDH / PDL:* `{pdh_str}` / `{pdl_str}`\n"
+                f"  • *Status:* _{status}_\n"
+            )
+        except Exception as exc:
+            lines.append(f"🔹 *{sym}*: Data unavailable ({scrub(exc)})\n")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("💡 _Tip: Use /paper for virtual positions or /whales for Open Interest flow._")
+    return "\n".join(lines)
+
+
+def handle_telegram_whales(chat_id: str) -> None:
+    """Day Trader Skill: Real-time Whale Derivatives Flow & Open Interest."""
+    send_telegram_chat_action(chat_id, action="typing")
+    lines = [
+        "🌊 *SMART MONEY & WHALE DERIVATIVES FLOW REPORT*",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+    for sym in SYMBOLS:
+        try:
+            w = get_whale_derivatives_data(sym)
+            oi_str = f"{w['open_interest']:,.0f}" if w['open_interest'] > 0 else "Spot Only / N/A"
+            lines.append(
+                f"🔹 *{sym}*\n"
+                f"  • *Top Trader Ratio:* `{w['top_traders_long_pct']} Long` vs `{w['top_traders_short_pct']} Short`\n"
+                f"  • *Open Interest:* `{oi_str}` contracts\n"
+                f"  • *Assessment:* _{w['flow_summary']}_\n"
+            )
+        except Exception as exc:
+            lines.append(f"🔹 *{sym}*: Derivatives flow unavailable ({scrub(exc)})\n")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("💡 _Source: Binance Futures Public Derivatives Feed_")
+    send_telegram("\n".join(lines), chat_id=chat_id, parse_mode="Markdown")
+
+
+def handle_telegram_sentiment(chat_id: str) -> None:
+    """Day Trader Skill: Macro Economic & Crypto Sentiment Filter."""
+    send_telegram_chat_action(chat_id, action="typing")
+    sent = get_crypto_sentiment()
+    score = sent.get("score", 50)
+    classification = sent.get("classification", "Neutral")
+    advice = sent.get("advice", "")
+
+    bars = int(score / 10)
+    meter = "🟩" * min(bars, 5) + "🟨" * max(0, min(bars - 5, 2)) + "🟥" * max(0, bars - 7)
+
+    msg = (
+        "🧠 *CRYPTO MARKET SENTIMENT & MACRO REGIME*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• *Fear & Greed Index:* `{score}/100` ({classification})\n"
+        f"• *Gauge:* [{meter}]\n"
+        f"• *Institutional Policy:* _{advice}_\n\n"
+        "🛡️ *Risk Filter Rules:*\n"
+        "• *Score < 25 (Extreme Fear):* High-probability liquidity sweep bounces favored.\n"
+        "• *Score > 75 (Extreme Greed):* Avoid late-breakout chasing; beware long liquidation flushes.\n"
+        "• *High-Impact USD Macro Events:* Bot blocks new setups 30m before CPI / FOMC.\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
+    send_telegram(msg, chat_id=chat_id, parse_mode="Markdown")
+
+
 def handle_telegram_start(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict, chat_id: str, is_activity_report: bool = False) -> None:
     now = datetime.now(LOCAL_TZ)
     send_telegram_chat_action(chat_id, action="typing")
@@ -2741,7 +3493,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
             params = {
                 "offset": offset,
                 "timeout": 10,
-                "allowed_updates": json.dumps(["message", "channel_post", "my_chat_member", "chat_member"]),
+                "allowed_updates": json.dumps(["message", "channel_post", "my_chat_member", "chat_member", "callback_query"]),
             }
             resp = requests.get(url, params=params, timeout=20)
             if resp.status_code != 200:
@@ -2754,6 +3506,84 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
 
             for update in res.get("result", []):
                 offset = max(offset, update["update_id"] + 1)
+
+                # Check for callback query from interactive paper trade inline buttons
+                cb = update.get("callback_query")
+                if cb:
+                    cb_id = cb.get("id")
+                    cb_data = cb.get("data", "")
+                    cb_msg = cb.get("message", {})
+                    cb_mid = cb_msg.get("message_id")
+                    cb_chat = str(cb_msg.get("chat", {}).get("id"))
+                    cb_from = cb.get("from", {}).get("first_name", "Trader")
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=5)
+                    except Exception:
+                        pass
+                    if cb_data.startswith("paper_approve_"):
+                        tid = cb_data.replace("paper_approve_", "")
+                        trade = PAPER_BROKER.approve_trade(tid)
+                        if trade and trade.get("status") == "BLOCKED":
+                            block_reason = trade.get("blocked_reason") or trade.get("detail", "Risk guard limit reached")
+                            if cb_mid and cb_chat:
+                                telegram_edit_reply_markup(cb_chat, cb_mid, {"inline_keyboard": [[{"text": "🛑 Blocked: Risk Guard", "callback_data": "none"}]]})
+                            send_telegram(
+                                f"🛑 *Trade Approval Blocked by Capital Safety Guard!*\n\n"
+                                f"• Reason: `{block_reason}`\n"
+                                f"• Setup: *{trade.get('symbol')} ({trade.get('direction')})*\n\n"
+                                f"_Capital preservation rules prevented opening this position._",
+                                chat_id=cb_chat,
+                                parse_mode="Markdown",
+                            )
+                            continue
+                        if cb_mid and cb_chat:
+                            telegram_edit_reply_markup(cb_chat, cb_mid, {"inline_keyboard": [[{"text": f"✅ Trade Approved by {cb_from}", "callback_data": "none"}]]})
+                        if trade:
+                            delta_res = DELTA_BROKER.execute_approved_trade(trade)
+                            delta_lines = []
+                            if delta_res.get("status") in ("EXECUTED", "SUBMITTED"):
+                                oid = delta_res.get("order_id") or "Submitted"
+                                pid = delta_res.get("product_id")
+                                c_size = delta_res.get("size", trade.get("quantity"))
+                                fill_str = f" @ `${delta_res.get('actual_fill_price'):,.4f}`" if delta_res.get("actual_fill_price") else ""
+                                delta_lines.append(f"• ⚡ *Delta Testnet Order:* Placed (ID: `{oid}` | {c_size} Lots{fill_str} | Prod: `{pid}`)")
+                                if delta_res.get("slippage_usd") and abs(delta_res.get("slippage_usd", 0)) > 1e-4:
+                                    delta_lines.append(f"• 🔍 *Slippage Guard:* Real Fill synced `${trade['entry_price']:,.4f}` (Shift: `{delta_res.get('slippage_usd'):+.2f}` USD)")
+                                if delta_res.get("stop_loss_response"):
+                                    delta_lines.append(f"• 🛡️ *Bracket Stop-Loss:* Active on Delta @ `${trade['stop_loss']:,.4f}`")
+                                if delta_res.get("take_profit_response"):
+                                    delta_lines.append(f"• 🎯 *Bracket Take-Profit:* Active on Delta @ `${trade['tp1']:,.4f}`")
+                            elif delta_res.get("status") == "BLOCKED":
+                                delta_lines.append(f"• 🛑 *Delta Testnet:* Blocked ({delta_res.get('reason')} - {delta_res.get('detail')})")
+                            elif DELTA_BROKER.enabled:
+                                delta_lines.append(f"• ⚠️ *Delta Testnet:* {delta_res.get('detail') or 'Routing check required'}")
+                            else:
+                                delta_lines.append("• 📑 *Execution Mode:* Virtual Paper Trading Portfolio (Delta Testnet disabled)")
+                            delta_text = "\n" + "\n".join(delta_lines)
+
+                            send_telegram(
+                                f"🟢 *Trade Approved by {cb_from}!*\n\n"
+                                f"• Pair: *{trade['symbol']} ({trade['direction']})*\n"
+                                f"• Sizing: `{trade['quantity']} {trade['symbol'].replace('USDT', '')}` (~${trade['max_loss_usd']:g} Risk)\n"
+                                f"• Entry: `${trade['entry_price']:,.4f}`\n"
+                                f"• Target 1 (1.5R): `${trade['tp1']:,.4f}` (Auto-BE trigger)\n"
+                                f"• Target 2: `${trade['tp2']:,.4f}`\n"
+                                f"• Stop Loss: `${trade['stop_loss']:,.4f}`"
+                                f"{delta_text}\n\n"
+                                f"_Bot is actively tracking this position in real-time._",
+                                chat_id=cb_chat,
+                                parse_mode="Markdown",
+                            )
+                        else:
+                            send_telegram("⚠️ *This trade is no longer pending or was already processed.*", chat_id=cb_chat, parse_mode="Markdown")
+                    elif cb_data.startswith("paper_reject_"):
+                        tid = cb_data.replace("paper_reject_", "")
+                        PAPER_BROKER.reject_trade(tid)
+                        if cb_mid and cb_chat:
+                            telegram_edit_reply_markup(cb_chat, cb_mid, {"inline_keyboard": [[{"text": f"❌ Trade Skipped by {cb_from}", "callback_data": "none"}]]})
+                        send_telegram(f"🔴 *Setup Skipped / Rejected by {cb_from}.*", chat_id=cb_chat, parse_mode="Markdown")
+                    continue
+
                 msg = update.get("message") or update.get("channel_post")
                 if not msg:
                     continue
@@ -3535,6 +4365,30 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     cmd in ("/exit", "exit", "/shutdown", "shutdown", "/kill", "kill")
                 )
 
+                is_paper_cmd = (
+                    cmd in ("/paper", "paper", "/portfolio", "portfolio", "/trades", "trades")
+                    or "paper trade" in clean_lower
+                )
+
+                is_screener_cmd = (
+                    cmd in ("/bias", "bias", "/screener", "screener", "/scanner", "scanner")
+                    or "daily bias" in clean_lower
+                    or "bias table" in clean_lower
+                    or "market bias" in clean_lower
+                )
+
+                is_whale_cmd = (
+                    cmd in ("/whales", "whales", "/whale", "whale", "/oi", "oi", "/flow", "flow")
+                    or "whale flow" in clean_lower
+                    or "open interest" in clean_lower
+                )
+
+                is_sentiment_cmd = (
+                    cmd in ("/sentiment", "sentiment", "/macro", "macro", "/fg", "fg", "/fear", "fear")
+                    or "fear and greed" in clean_lower
+                    or "market sentiment" in clean_lower
+                )
+
                 is_help_cmd = (
                     cmd in ("/help", "help")
                 )
@@ -3549,7 +4403,20 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     or clean_lower.startswith("/tado")
                 )
 
-                if is_chart_cmd:
+                if is_paper_cmd:
+                    summary = PAPER_BROKER.get_summary_text()
+                    send_telegram(summary, chat_id=chat_id, parse_mode="Markdown")
+                elif is_screener_cmd:
+                    log.info("Daily bias screener requested by %s ('%s')", chat_id, text)
+                    screener_text = generate_daily_bias_screener(client)
+                    send_telegram(screener_text, chat_id=chat_id, parse_mode="Markdown")
+                elif is_whale_cmd:
+                    log.info("Whale derivatives flow requested by %s ('%s')", chat_id, text)
+                    handle_telegram_whales(chat_id)
+                elif is_sentiment_cmd:
+                    log.info("Sentiment report requested by %s ('%s')", chat_id, text)
+                    handle_telegram_sentiment(chat_id)
+                elif is_chart_cmd:
                     log.info("Chart images requested by %s ('%s'), requested_sym=%s", chat_id, text, requested_chart_sym)
                     handle_telegram_charts(client, chat_id, requested_sym=requested_chart_sym)
                 elif is_ai_tagged or chat_type == "private":
@@ -3624,6 +4491,10 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         "💡 *Commands:*\n"
                         "• `chart image` ya `/charts` - Sabhi charts + PD-OHLC levels\n"
                         "• `chart <coin>` (e.g. `chart btc`) - Single chart image\n"
+                        "• `/paper` - Active paper trades & portfolio PnL report\n"
+                        "• `/bias` ya `/screener` - Multi-Pair 4H Daily Bias Screener Table\n"
+                        "• `/whales` ya `/oi` - Binance Futures Whale Flow & Open Interest\n"
+                        "• `/sentiment` ya `/macro` - Crypto Fear & Greed Index & Macro Filter\n"
                         "• `what are doing` ya `kya kar rahe ho` - Analysis report\n"
                         "• `/ask <question>` - Groq AI se direct institutional jawab payein\n"
                         "• `/rules` - Group guidelines\n"
@@ -3649,6 +4520,10 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         "📈 *Market & Trading Signals:*\n"
                         "• `chart image` ya `/charts` - *Har symbol ka visual chart + PDH/PDL*\n"
                         "• `chart <coin>` (e.g. `chart btc`) - *Single coin chart image*\n"
+                        "• `/paper` - *Paper Trading Portfolio & Active Trades Report*\n"
+                        "• `/bias` ya `/screener` - *Multi-Pair 4H Market Structure & Bias Screener*\n"
+                        "• `/whales` ya `/oi` - *Whale Derivatives Flow & Open Interest*\n"
+                        "• `/sentiment` ya `/macro` - *Crypto Fear & Greed Index & Policy*\n"
                         "• `what are doing` ya `kya kar rahe ho` - *Bot Activity Report*\n"
                         "• `@ai <question>` (e.g. `@ai BTC trend?`) - *Groq AI Institutional Answer*\n"
                         "• `/scan` - *Instant liquidity sweep & OB scan*\n"
@@ -3776,7 +4651,132 @@ def run_test() -> int:
             print(f"   OK - Cloudinary connected successfully (status: {ping_res.get('status', 'OK')})")
         except Exception as exc:
             print(f"   WARNING (Cloudinary ping failed: {exc})")
+
+    print("6) Day Trader Skill Quantitative Engines ...")
+    try:
+        # Test Monte Carlo
+        test_candles = [{"open": 100, "high": 102, "low": 99, "close": 101} for _ in range(30)]
+        mc = run_monte_carlo_simulation(test_candles, 100, 98, 105, simulations=1000)
+        print(f"   OK - Time Machine Monte Carlo ({mc['simulations']} runs): Win {mc['target_win_prob']} | Stop {mc['stop_loss_prob']} | Edge: {mc['edge']}")
+        # Test Risk Budget
+        order = RISK_MGR.calculate_position(100, 98, 105)
+        print(f"   OK - Risk Budget Manager: Qty {order.get('quantity_str')} | Capital ${order.get('capital_required_usd')} | RR {order.get('risk_reward_ratio')}")
+        # Test Macro & Whale
+        sentiment = get_crypto_sentiment()
+        print(f"   OK - Macro Sentiment (Fear & Greed): {sentiment.get('score')}/100 ({sentiment.get('classification')})")
+        # Test Paper Broker
+        p_count = len(PAPER_BROKER.get_open_positions())
+        print(f"   OK - Paper Broker Engine: Ready ({p_count} open trades)")
+    except Exception as exc:
+        print(f"   FAILED: {exc}")
+
+    print("7) Delta Exchange Testnet Broker ...")
+    if not DELTA_BROKER.enabled:
+        print(f"   SKIPPED/DISABLED (DELTA_TESTNET_ENABLED=false in .env | Base URL: {DELTA_BROKER.base_url})")
+    elif not DELTA_BROKER.api_key:
+        print(f"   WARNING (DELTA_TESTNET_ENABLED=true but DELTA_API_KEY is not set in .env)")
+    else:
+        try:
+            bal = DELTA_BROKER.get_balance()
+            if "error" in bal:
+                print(f"   WARNING (Delta auth/connectivity issue: {bal.get('error')})")
+            else:
+                print(f"   OK - Delta Testnet connected ({DELTA_BROKER.base_url})")
+        except Exception as exc:
+            print(f"   FAILED: {exc}")
+
     return 0
+
+
+def paper_position_tracker_loop(client: BinanceClient, state: dict) -> None:
+    """Continuously evaluates open paper trades against live prices every 10 seconds."""
+    log.info("Paper position real-time tracking thread started (10s interval)...")
+    tracker_cb = NetworkCircuitBreaker(name="PaperTracker")
+    while not STOP.is_set():
+        try:
+            open_positions = PAPER_BROKER.get_open_positions()
+            if open_positions:
+                syms = list({p["symbol"] for p in open_positions})
+                prices = {}
+                fetch_err = None
+                for s in syms:
+                    try:
+                        prices[s] = client.price(s)
+                    except Exception as p_err:
+                        fetch_err = p_err
+
+                # Stale Data & Timestamp Sanity Guard (3 minutes = 180s)
+                stale_syms = []
+                for s in list(prices.keys()):
+                    is_fresh, fresh_msg = verify_market_data_freshness(s, client=client, max_age_seconds=180.0)
+                    if not is_fresh:
+                        log.warning("10s Tracker evaluation halted for %s: %s", s, fresh_msg)
+                        stale_syms.append(s)
+                for s in stale_syms:
+                    prices.pop(s, None)
+
+                if fetch_err and not prices:
+                    tracker_cb.record_failure(fetch_err)
+                elif prices:
+                    tracker_cb.record_success()
+                    events = PAPER_BROKER.update_positions(prices)
+                    for pe in events:
+                        send_telegram(pe["message"], parse_mode="Markdown")
+                        pe_type = pe.get("type")
+                        sym = pe.get("symbol", "")
+                        td = pe.get("trade_data", {})
+
+                        # 1. Breakeven Migration hook on Delta Exchange when TP1 or TP2 is hit (Lot Size Precision)
+                        if pe_type in ("TP1_HIT", "TP2_HIT"):
+                            try:
+                                is_long = pe.get("direction", "LONG").upper() == "LONG"
+                                close_side = "sell" if is_long else "buy"
+                                rem_qty = pe.get("remaining_qty") or td.get("remaining_qty") or td.get("quantity", 1.0)
+                                c_size = DELTA_BROKER.normalize_contract_size(sym, float(rem_qty))
+                                be_price = float(pe.get("new_stop") or td.get("entry_price", 0.0))
+                                if be_price > 0:
+                                    be_res = DELTA_BROKER.update_stop_loss_to_breakeven(
+                                        symbol=sym,
+                                        size=c_size,
+                                        side=close_side,
+                                        entry_price=be_price,
+                                    )
+                                    if be_res.get("status") == "MIGRATED_TO_BREAKEVEN":
+                                        log.info("Delta Breakeven successfully updated for %s @ %s (runner: %s contracts)", sym, be_price, c_size)
+                            except Exception as be_exc:
+                                log.warning("Delta breakeven migration error: %s", be_exc)
+
+                        # 2. Bracket Order Cleanup (OCO Simulation) when trade completely closes
+                        if pe_type in ("TP3_HIT", "STOP_HIT", "BE_HIT", "STALE_ALERT"):
+                            try:
+                                clean_res = DELTA_BROKER.cancel_all_orders_for_symbol(sym)
+                                if clean_res.get("status") == "CLEANED":
+                                    log.info("Delta OCO cleanup completed for %s: orphan orders cancelled", sym)
+                            except Exception as cl_exc:
+                                log.warning("Delta order cleanup error: %s", cl_exc)
+
+                            queue_row(state, "Paper Trading PnL", [
+                                fmt_ts(datetime.now(LOCAL_TZ)),
+                                pe.get("trade_id", "N/A"),
+                                pe.get("symbol", "N/A"),
+                                pe.get("direction", "N/A"),
+                                round(float(td.get("entry_price", 0)), 6),
+                                round(float(pe.get("exit_price", 0)), 6),
+                                td.get("quantity", 0),
+                                round(float(pe.get("total_pnl_usd", 0)), 2),
+                                round(float(pe.get("realized_r", 0)), 2),
+                                pe.get("exit_reason", "N/A"),
+                                f"{int((time.time() - float(td.get('opened_at', time.time()))) // 60)} mins",
+                            ])
+            else:
+                tracker_cb.record_success()
+        except Exception as exc:
+            tracker_cb.record_failure(exc)
+            log.warning("Position tracker error: %s", exc)
+
+        update_daemon_heartbeat(status="ACTIVE")
+        sleep_time = tracker_cb.get_sleep_duration(base_interval=10.0)
+        STOP.wait(sleep_time)
 
 
 def main() -> int:
@@ -3784,9 +4784,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Liquidity sweep + OB retest alert bot")
     parser.add_argument("--test", action="store_true", help="test Binance/Telegram/Sheets connections and exit")
     parser.add_argument("--once", action="store_true", help="run a single scan cycle and exit")
+    parser.add_argument("--health", action="store_true", help="Inspect heartbeat.json health for docker/systemd and exit")
     args = parser.parse_args()
 
+    if args.health:
+        return run_health_check()
+
     setup_logging()
+    if not validate_system_prerequisites():
+        return 1
+
     SHEETS_ON = sheets_enabled()
 
     if args.test:
@@ -3800,6 +4807,11 @@ def main() -> int:
     sheets = SheetsLogger() if SHEETS_ON else None
     health = {"fails": 0, "notified": False}
 
+    # Reconcile Delta exchange positions on startup to prevent duplicate orders
+    if DELTA_BROKER.enabled:
+        reconcile_res = DELTA_BROKER.reconcile_state_on_startup(PAPER_BROKER)
+        log.info("Delta startup state reconciliation: %s", reconcile_res.get("status"))
+
     log.info("Starting | symbols=%s | timeframes=%s | interval=%ss | telegram=%s | sheets=%s | tz=%s",
              ",".join(SYMBOLS), TIMEFRAME, SCAN_INTERVAL, telegram_configured(), SHEETS_ON, TZ_NAME)
     if not SHEETS_ON:
@@ -3809,15 +4821,25 @@ def main() -> int:
         sheet_text = f"\n📊 *Google Sheet:* [Open Live Sheet]({sheet_url})" if sheet_url else ""
         send_telegram(f"🤖 *trader_bot started.* Watching {', '.join(SYMBOLS)} on {TIMEFRAME} ({SCAN_INTERVAL}s scan cycle).{sheet_text}", parse_mode="Markdown")
 
-    if TELEGRAM_TOKEN and not args.once:
-        t_listener = threading.Thread(
-            target=telegram_listener_loop,
-            args=(client, sheets, state),
-            name="TelegramListener",
+    if not args.once:
+        if TELEGRAM_TOKEN:
+            t_listener = threading.Thread(
+                target=telegram_listener_loop,
+                args=(client, sheets, state),
+                name="TelegramListener",
+                daemon=True,
+            )
+            t_listener.start()
+
+        t_pos_tracker = threading.Thread(
+            target=paper_position_tracker_loop,
+            args=(client, state),
+            name="PaperPositionTracker",
             daemon=True,
         )
-        t_listener.start()
+        t_pos_tracker.start()
 
+    scanner_cb = NetworkCircuitBreaker(name="ScannerMain")
     while not STOP.is_set():                       # 24/7 loop
         if not SCANNING_ACTIVE.is_set():
             # Analysis is paused by user ('end' command)
@@ -3828,14 +4850,22 @@ def main() -> int:
         started = time.time()
         try:
             run_cycle(client, sheets, state, health)
-        except Exception:                          # absolute safety net: never crash
+            scanner_cb.record_success()
+        except Exception as sc_err:                    # absolute safety net: never crash
+            scanner_cb.record_failure(sc_err)
             log.exception("Unhandled error in scan cycle - continuing")
         if args.once:
             break
-        # Interruptible equivalent of time.sleep(SCAN_INTERVAL)
-        STOP.wait(max(1.0, SCAN_INTERVAL - (time.time() - started)))
+        # Interruptible equivalent of time.sleep(SCAN_INTERVAL) with circuit breaker backoff
+        base_sleep = max(1.0, SCAN_INTERVAL - (time.time() - started))
+        actual_sleep = scanner_cb.get_sleep_duration(base_sleep)
+        STOP.wait(actual_sleep)
 
     save_state(state)
+    try:
+        PAPER_BROKER.shutdown()
+    except Exception:
+        pass
     log.info("Stopped cleanly.")
     return 0
 
