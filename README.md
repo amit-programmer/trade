@@ -306,6 +306,14 @@ Bot ke paas group/channel administration ke sabhi 7 standard permissions configu
 | `TIMEFRAMES` | No | `15m, 5m, 1h, 4h, 1m` | Active timeframes to monitor |
 | `SCAN_INTERVAL_SECONDS`| No | `60` | Loop interval between scan cycles |
 | `TIMEZONE` | No | `UTC` | IANA Timezone string (e.g. `Asia/Kolkata`, `UTC`) |
+| `ACCOUNT_BALANCE` | No | `1000.0` | Initial virtual portfolio size in USD |
+| `MAX_LOSS_PER_TRADE_USD`| No | `20.0` | 1R max loss risk budget per trade ($20.00) |
+| `MAX_CONCURRENT_TRADES`| No | `3` | Max concurrent open trades allowed simultaneously |
+| `MAX_DAILY_LOSS_USD` | No | `50.0` | Daily max drawdown hard stop limit ($50.00) |
+| `DELTA_TESTNET_ENABLED`| No | `false` | Enable live HMAC execution on Delta Exchange |
+| `DELTA_BASE_URL` | No | `https://testnet-api.delta.exchange` | Delta REST API endpoint (Testnet or Live) |
+| `DELTA_API_KEY` | Optional | - | Delta Exchange API Key |
+| `DELTA_API_SECRET` | Optional | - | Delta Exchange API Secret |
 
 ---
 
@@ -424,36 +432,52 @@ copy .env.example .env
 # 5. Connection test run karein
 python trader_bot.py --test
 
-# 6. Bot run karein (24/7 Mode)
+# 6. Bot run karein (24/7 Production Mode)
 python trader_bot.py
 
 # Ya single cycle scan ke liye:
 python trader_bot.py --once
+
+# 7. Standalone Health Watchdog Check (Docker / Systemd)
+python trader_bot.py --health
+
+# 8. FastAPI Web Dashboard & Institutional Terminal (Port 8000)
+python -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
 ---
 
-## 🔍 Verification & Diagnostic Tests
+## 🔍 Verification, Health Check & Automated Test Suites
 
-Har deployment se pehle bot me built-in comprehensive diagnostic tool hai jo har service ko test karta hai:
+### 1. Standalone Production Health Probe (`--health`)
+Docker container healthchecks aur Linux Systemd watchdogs ke liye standard-library based sub-second health probe:
+```bash
+python trader_bot.py --health
+```
+- **Healthy Output**: `HEALTHY: Daemon ACTIVE (last beat: 12.0s ago | open: 0 | daily loss: $0.00)` ➔ **Exit Code 0**
+- **Unhealthy Output**: `UNHEALTHY: Stale heartbeat (> 120s)` ➔ **Exit Code 1** (Docker / Systemd triggers auto-restart)
 
+### 2. Live Service Connectivity Test (`--test`)
+Har deployment se pehle bot me built-in comprehensive diagnostic tool jo APIs test karta hai:
 ```bash
 python trader_bot.py --test
 ```
 
-**Output Example:**
-```text
-1) Binance public API ...
-   OK - ETHUSDT price = 2,414.63
-2) Telegram ...
-   OK - check your Telegram chat
-3) Google Sheets ...
-   OK - connected and appended to 'Scan Log' via .env secret (GOOGLE_CREDENTIALS_JSON)
-4) Groq AI API ...
-   OK - Model 'qwen/qwen3.8-27b' connected successfully (JSON mode: {"status": "READY", "model": "qwen"})
-5) Cloudinary & mplfinance ...
-   OK - mplfinance loaded successfully
-   OK - Cloudinary connected successfully (status: ok)
+### 3. Automated Institutional Test Suites
+Production deployment se pehle pure system ki reliability test karne ke 4 suites:
+
+```bash
+# 1. Operational readiness: Rotating logger, Groq 429 shield, Heartbeat & Thread crash dumps
+python test_production_readiness.py
+
+# 2. Risk & Sanity: Concurrency limit, $50 daily drawdown hard-stop & 180s stale data filters
+python test_risk_and_sanity_guards.py
+
+# 3. End-to-End Dry Run: 8-stage synthetic lifecycle, Monte Carlo math, TP1/TP2/TP3 partials
+python test_e2e_dry_run.py
+
+# 4. Operational maintenance: Logger rollover and atomic state consistency
+python test_operational_maintenance.py
 ```
 
 ---
