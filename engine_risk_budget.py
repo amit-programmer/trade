@@ -21,6 +21,7 @@ class RiskBudgetManager:
     ):
         self.account_balance = float(account_balance)
         self.max_loss_usd = float(max_loss_per_trade_usd)
+        self.max_loss_per_trade_usd = self.max_loss_usd
         self.max_daily_trades = int(max_daily_trades)
         self.max_concurrent_trades = int(max_concurrent_trades)
         self.max_daily_loss_usd = float(max_daily_loss_usd)
