@@ -9,6 +9,7 @@
 #   ./deploy.sh stop     -> Stop service
 #   ./deploy.sh restart  -> Restart service
 #   ./deploy.sh status   -> View current service status
+#   ./deploy.sh health   -> Check daemon health status (--health)
 #   ./deploy.sh logs     -> Tail live journalctl logs
 # =============================================================================
 
@@ -114,8 +115,16 @@ EOF
     sudo journalctl -u "${SERVICE_NAME}" -f -n 100
     ;;
 
+  health)
+    if [ ! -f "$PYTHON_BIN" ]; then
+      echo "❌ Virtual environment not found. Run './deploy.sh setup' first."
+      exit 1
+    fi
+    "$PYTHON_BIN" "${PROJECT_DIR}/trader_bot.py" --health
+    ;;
+
   *)
-    echo "Usage: $0 {setup|test|start|stop|restart|status|logs}"
+    echo "Usage: $0 {setup|test|health|start|stop|restart|status|logs}"
     exit 1
     ;;
 esac
