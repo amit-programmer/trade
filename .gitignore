@@ -23,6 +23,7 @@ heartbeat.json
 crash_dump.json
 paper_positions.json
 paper_positions_history.json
+adaptive_config.json
 *.log*
 trader_bot.log
 *.tmp

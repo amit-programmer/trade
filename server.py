@@ -12,11 +12,13 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import collections
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -24,9 +26,16 @@ from engine_paper_broker import PAPER_BROKER
 from engine_macro_filter import get_crypto_sentiment, check_macro_event_block
 from engine_whale_tracker import get_whale_derivatives_data
 from engine_delta_broker import DELTA_BROKER
+from engine_adaptive_tuner import (
+    load_adaptive_config,
+    save_adaptive_config,
+    run_adaptive_self_tuning,
+    apply_adaptive_config_to_strategy,
+)
 
 # Import core configurations and state helpers safely from trader_bot
 from trader_bot import (
+    CFG,
     SYMBOLS,
     TIMEFRAMES,
     SCAN_INTERVAL,
@@ -37,12 +46,63 @@ from trader_bot import (
     get_sheet_link,
     load_state,
     save_state,
+    get_execution_mode,
+    set_execution_mode,
     fmt_price,
     send_telegram,
     telegram_configured,
 )
 
 log = logging.getLogger("trade_server")
+
+# --- WebSocket Streaming & Terminal Log Ring Buffer ---
+TERMINAL_LOGS: collections.deque[Dict[str, str]] = collections.deque(maxlen=300)
+
+
+class TerminalLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            TERMINAL_LOGS.append({
+                "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                "level": record.levelname,
+                "msg": msg,
+            })
+        except Exception:
+            pass
+
+
+_term_handler = TerminalLogHandler()
+_term_handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s [%(name)s] %(message)s", datefmt="%H:%M:%S"))
+logging.getLogger().addHandler(_term_handler)
+
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self._lock = threading.Lock()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        with self._lock:
+            self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        with self._lock:
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        with self._lock:
+            conns = list(self.active_connections)
+        for connection in conns:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                self.disconnect(connection)
+
+
+manager = ConnectionManager()
 
 app = FastAPI(
     title="SMC Crypto Trading Bot API & Dashboard",
@@ -214,9 +274,185 @@ def resume_scanning() -> Dict[str, Any]:
     return {"status": "RESUMED", "scanning_active": True}
 
 
+def get_micro_agents_status() -> Dict[str, Any]:
+    state = load_state()
+    stats = state.get("stats", {})
+    sentiment = get_crypto_sentiment()
+    macro = check_macro_event_block(buffer_pre_min=30, buffer_post_min=15)
+    open_pos = PAPER_BROKER.get_open_positions()
+    closed_pos = PAPER_BROKER.get_closed_positions()
+    wins = sum(1 for p in closed_pos if float(p.get("total_pnl_usd", 0)) > 0)
+    win_rate = (wins / len(closed_pos) * 100) if closed_pos else 0.0
+    tot_pnl = sum(float(p.get("total_pnl_usd", 0)) for p in closed_pos)
+    today_loss = PAPER_BROKER.get_today_realized_loss_usd()
+    exec_m = get_execution_mode()
+
+    return {
+        "scanner": {
+            "name": "Scanner Agent",
+            "status": "RUNNING" if SCANNING_ACTIVE.is_set() else "PAUSED",
+            "detail": f"{len(SYMBOLS)} Pairs | {len(TIMEFRAMES)} TFs | {stats.get('scans', 0)} cycles",
+            "active": SCANNING_ACTIVE.is_set(),
+        },
+        "filter": {
+            "name": "Filter Agent",
+            "status": "BLOCKED" if macro.get("is_blocked") else "CLEAR",
+            "detail": f"F&G: {sentiment.get('score', 50)} ({sentiment.get('classification', 'Neutral')}) | Macro: {macro.get('status', 'OK')}",
+            "active": not macro.get("is_blocked"),
+        },
+        "sizer": {
+            "name": "Sizer Agent",
+            "status": "ARMED",
+            "detail": f"$20 Max 1R Risk | ATR Sizing | ${today_loss:.2f}/$50 Daily Loss",
+            "active": True,
+        },
+        "executor": {
+            "name": "Executor Agent",
+            "status": exec_m,
+            "detail": f"Broker: {'Delta Testnet' if DELTA_BROKER.enabled else 'Paper Portfolio'} | Mode: {exec_m}",
+            "active": True,
+        },
+        "logger": {
+            "name": "Logger Agent",
+            "status": "SYNCED",
+            "detail": f"Telegram Alerting | 4-Tab Google Sheets | Log Rotation",
+            "active": True,
+        },
+        "equity": {
+            "name": "Equity Agent",
+            "status": "HEALTHY",
+            "detail": f"Net PnL: ${tot_pnl:+.2f} | Win Rate: {win_rate:.1f}% ({len(closed_pos)} trades) | Open: {len(open_pos)}",
+            "active": True,
+        },
+    }
+
+
+@app.get("/api/agents")
+def get_agents_endpoint() -> Dict[str, Any]:
+    return get_micro_agents_status()
+
+
+@app.get("/api/control/mode")
+def get_mode_endpoint() -> Dict[str, Any]:
+    return {"execution_mode": get_execution_mode()}
+
+
+@app.post("/api/control/toggle-mode")
+def toggle_mode_endpoint() -> Dict[str, Any]:
+    curr = get_execution_mode()
+    target = "AUTONOMOUS" if curr == "HUMAN" else "HUMAN"
+    new_m = set_execution_mode(target)
+    if telegram_configured():
+        send_telegram(
+            f"🔄 *Master Execution Mode Toggled via Web Dashboard!*\n\n"
+            f"• *New Mode:* `{new_m}`\n"
+            f"• *Behavior:* {'🤖 AI Full Autonomy (Zero-touch Grade A/A+ execution)' if new_m == 'AUTONOMOUS' else '👤 Human Approval Required'}",
+            parse_mode="Markdown",
+        )
+    return {"status": "SUCCESS", "previous_mode": curr, "execution_mode": new_m}
+
+
+@app.post("/api/control/mode")
+async def set_mode_endpoint(req: Request) -> Dict[str, Any]:
+    try:
+        body = await req.json()
+        target = body.get("mode", "HUMAN")
+    except Exception:
+        target = "HUMAN"
+    new_m = set_execution_mode(target)
+    return {"status": "SUCCESS", "execution_mode": new_m}
+
+
+@app.post("/api/paper/close/{trade_id}")
+def manual_close_trade(trade_id: str) -> Dict[str, Any]:
+    open_positions = PAPER_BROKER.get_open_positions()
+    pos = next((p for p in open_positions if p["trade_id"] == trade_id), None)
+    if not pos:
+        raise HTTPException(status_code=404, detail="Open trade not found")
+    sym = pos["symbol"]
+    try:
+        cur_price = _client.price(sym)
+    except Exception:
+        cur_price = float(pos.get("entry_price", 0.0))
+    closed_event = PAPER_BROKER.close_position_early(trade_id, cur_price, reason="MANUAL_UI_EARLY_CLOSE")
+    if not closed_event:
+        raise HTTPException(status_code=400, detail="Could not close position early")
+    DELTA_BROKER.cancel_all_orders_for_symbol(sym)
+    if telegram_configured():
+        send_telegram(
+            f"🛑 *Position Closed Early via Web Dashboard*\n\n"
+            f"• Symbol: *{sym} ({pos.get('direction')})*\n"
+            f"• Exit Price: `${cur_price:,.4f}`\n"
+            f"• Realized PnL: `${closed_event.get('total_pnl_usd', 0):+.2f}`",
+            parse_mode="Markdown",
+        )
+    return {"status": "CLOSED", "trade_id": trade_id, "event": closed_event}
+
+
+@app.get("/api/adaptive-config")
+def get_adaptive_config_endpoint() -> Dict[str, Any]:
+    return load_adaptive_config()
+
+
+@app.post("/api/control/run-tuner")
+def run_tuner_endpoint() -> Dict[str, Any]:
+    closed = PAPER_BROKER.get_closed_positions()
+    new_cfg, row = run_adaptive_self_tuning(closed)
+    apply_adaptive_config_to_strategy(CFG)
+    return {"status": "SUCCESS", "adaptive_config": new_cfg, "log_row": row}
+
+
+@app.websocket("/ws/terminal")
+async def websocket_terminal(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        # Initial snapshot on connection
+        snapshot = {
+            "type": "SNAPSHOT",
+            "execution_mode": get_execution_mode(),
+            "scanning_active": SCANNING_ACTIVE.is_set(),
+            "open_positions": PAPER_BROKER.get_open_positions(),
+            "pending_approvals": PAPER_BROKER.pending_approvals,
+            "closed_count": len(PAPER_BROKER.get_closed_positions()),
+            "logs": list(TERMINAL_LOGS)[-50:],
+            "agents": get_micro_agents_status(),
+        }
+        await websocket.send_json(snapshot)
+
+        # Heartbeat & client command listener
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                if msg.get("action") == "PING":
+                    await websocket.send_json({"type": "PONG", "timestamp": time.time()})
+                elif msg.get("action") == "TOGGLE_MODE":
+                    curr = get_execution_mode()
+                    new_m = set_execution_mode("AUTONOMOUS" if curr == "HUMAN" else "HUMAN")
+                    await manager.broadcast({"type": "MODE_CHANGE", "execution_mode": new_m})
+                elif msg.get("action") == "REFRESH":
+                    await websocket.send_json({
+                        "type": "REFRESH",
+                        "agents": get_micro_agents_status(),
+                        "open_positions": PAPER_BROKER.get_open_positions(),
+                        "pending_approvals": PAPER_BROKER.pending_approvals,
+                        "logs": list(TERMINAL_LOGS)[-20:],
+                    })
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+
+
 @app.get("/", response_class=HTMLResponse)
-def index_dashboard() -> str:
+def index_dashboard() -> Any:
     """Institutional Dark Theme Dashboard for Web Browsers."""
+    tmpl_path = Path(__file__).resolve().parent / "templates" / "index.html"
+    if tmpl_path.exists():
+        return HTMLResponse(content=tmpl_path.read_text(encoding="utf-8"))
+
     status_str = "🟢 ACTIVE" if SCANNING_ACTIVE.is_set() else "🛑 PAUSED"
     status_badge_class = "badge-active" if SCANNING_ACTIVE.is_set() else "badge-paused"
     sheet_link = get_sheet_link() or "#"

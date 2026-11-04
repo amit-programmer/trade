@@ -169,7 +169,12 @@ class PaperBroker:
     def get_open_positions(self) -> List[Dict[str, Any]]:
         with _LOCK:
             self._reload()
-            return list(self.state.get("open", {}).values())
+            res = []
+            for tid, p in self.state.get("open", {}).items():
+                p.setdefault("id", tid)
+                p.setdefault("trade_id", tid)
+                res.append(p)
+            return res
 
     def get_closed_positions(self) -> List[Dict[str, Any]]:
         with _LOCK:
@@ -216,6 +221,7 @@ class PaperBroker:
             self._reload()
             self.state["pending"][trade_id] = {
                 "id": trade_id,
+                "trade_id": trade_id,
                 "symbol": symbol,
                 "direction": direction.upper(),
                 "timeframe": timeframe,
@@ -359,6 +365,87 @@ class PaperBroker:
             log.info("Slippage Guard: Trade %s entry updated to %s (old: %s, new TP1: %s, TP2: %s)",
                      trade_id, actual_fill_price, old_entry, pos["tp1"], pos["tp2"])
             return pos
+
+    def close_position_early(self, trade_id: str, exit_price: float, reason: str = "AI_EARLY_EXIT") -> Optional[Dict[str, Any]]:
+        """
+        Closes an open position immediately at exit_price (e.g. on AI regime shift or manual UI tap).
+        Calculates final realized PnL, updates stats, archives trade, and returns the closed event.
+        """
+        exit_price = float(exit_price)
+        with _LOCK:
+            self._reload()
+            pos = self.state.get("open", {}).pop(trade_id, None)
+            if not pos:
+                return None
+
+            entry = float(pos.get("entry_price", exit_price))
+            total_qty = float(pos.get("quantity", 1.0))
+            rem_qty = float(pos.get("remaining_qty", total_qty))
+            is_long = pos.get("direction", "LONG").upper() == "LONG"
+
+            pnl_final_step = rem_qty * (exit_price - entry if is_long else entry - exit_price)
+            total_pnl = round(float(pos.get("booked_pnl_usd", 0.0)) + pnl_final_step, 2)
+            total_r = round(total_pnl / float(pos.get("max_loss_usd", 20.0)), 2)
+
+            pos["closed_price"] = exit_price
+            pos["closed_at"] = time.time()
+            pos["closed_ts"] = datetime.now(timezone.utc).isoformat()
+            pos["total_pnl_usd"] = total_pnl
+            pos["realized_r"] = total_r
+            pos["exit_reason"] = reason
+
+            self.state["closed"].append(pos)
+            self.state["stats"]["total_trades"] += 1
+            self.state["stats"]["total_pnl_usd"] = round(self.state["stats"]["total_pnl_usd"] + total_pnl, 2)
+            self.state["stats"]["total_realized_r"] = round(self.state["stats"]["total_realized_r"] + total_r, 2)
+            if total_pnl > 0.05:
+                self.state["stats"]["wins"] += 1
+            elif total_pnl < -0.05:
+                self.state["stats"]["losses"] += 1
+            else:
+                self.state["stats"]["breakevens"] += 1
+
+            self._save()
+
+        elapsed = time.time() - float(pos.get("opened_at", time.time()))
+        icon = "🏆" if total_pnl > 0 else ("⚖️" if total_pnl == 0 else "🛑")
+        event = {
+            "type": "EARLY_EXIT",
+            "trade_id": trade_id,
+            "symbol": pos.get("symbol"),
+            "direction": pos.get("direction"),
+            "exit_price": exit_price,
+            "total_pnl_usd": total_pnl,
+            "realized_r": total_r,
+            "exit_reason": reason,
+            "trade_data": dict(pos),
+            "message": (
+                f"{icon} *PAPER TRADE CLOSED EARLY: {pos.get('symbol')} ({pos.get('direction')})*\n"
+                f"• Outcome / Reason: *{reason}*\n"
+                f"• Exit Price: `${exit_price:,.4f}` (Entry: `${entry:,.4f}`)\n"
+                f"• Realized P&L: `{'+$' if total_pnl>=0 else '-$'}{abs(total_pnl):,.2f}` ({total_r:+.2f}R)\n"
+                f"• Duration: `{int(elapsed // 60)} mins`"
+            ),
+        }
+        log.info("Paper position %s closed early @ %s. Reason: %s | PnL: %s", trade_id, exit_price, reason, total_pnl)
+        return event
+
+    def update_position_stop(self, trade_id: str, new_stop: float, stage: str = "AI_BE_SHIFT") -> Optional[Dict[str, Any]]:
+        """
+        Updates the active stop-loss level of an open trade (e.g. moving to breakeven).
+        """
+        new_stop = float(new_stop)
+        with _LOCK:
+            self._reload()
+            pos = self.state.get("open", {}).get(trade_id)
+            if not pos:
+                return None
+            old_sl = float(pos.get("stop_loss", new_stop))
+            pos["stop_loss"] = new_stop
+            pos["stage"] = stage
+            self._save()
+        log.info("Trade %s stop updated to %s (old: %s, stage: %s)", trade_id, new_stop, old_sl, stage)
+        return pos
 
     def update_positions(self, current_prices: Dict[str, float]) -> List[Dict[str, Any]]:
         """

@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMC QUANT TERMINAL // CYBER DUAL-MODE</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cyberdark: '#080b11',
+                        cybercard: '#0e1420',
+                        cyberborder: '#1a2333',
+                        cyancyan: '#00e5ff',
+                        cyangreen: '#00ff88',
+                        cyanpink: '#ff0055',
+                        cyanpurple: '#bd00ff',
+                        cyanyellow: '#ffd000',
+                    },
+                    boxShadow: {
+                        'neon-green': '0 0 15px rgba(0, 255, 136, 0.35)',
+                        'neon-cyan': '0 0 15px rgba(0, 229, 255, 0.35)',
+                        'neon-pink': '0 0 15px rgba(255, 0, 85, 0.35)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;800&family=Rajdhani:wght@500;600;700&display=swap');
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: #080b11;
+            color: #e2e8f0;
+        }
+        .mono-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .scanlines {
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            background-size: 100% 3px, 6px 100%;
+        }
+        .glow-border {
+            border: 1px solid #1e293b;
+            transition: all 0.3s ease;
+        }
+        .glow-border:hover {
+            border-color: #00e5ff;
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.2);
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #080b11;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00e5ff;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-cyberdark text-slate-200 antialiased selection:bg-cyancyan selection:text-black">
+
+    <!-- Top Master Control Bar -->
+    <header class="border-b border-cyberborder bg-cybercard/80 backdrop-blur sticky top-0 z-50 px-4 py-3">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="h-9 w-9 rounded-lg bg-cyberdark border border-cyancyan flex items-center justify-center shadow-neon-cyan">
+                    <span class="text-cyancyan font-extrabold text-xl">⚡</span>
+                </div>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <h1 class="text-xl font-bold tracking-wider uppercase text-white font-mono">QUANTUM SMC CORE</h1>
+                        <span id="ws-badge" class="px-2 py-0.5 text-xs font-mono rounded bg-slate-800 text-slate-400 border border-slate-700">CONNECTING...</span>
+                    </div>
+                    <p class="text-xs text-slate-400 mono-font">Institutional Liquidity Sweep & AI Autonomous Engine</p>
+                </div>
+            </div>
+
+            <!-- Master Mode Toggle -->
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center bg-cyberdark border border-cyberborder rounded-xl p-1.5 shadow-inner">
+                    <span class="text-xs font-mono uppercase text-slate-400 px-2">Master Execution:</span>
+                    <button id="mode-btn" onclick="toggleMode()" class="px-4 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-300 flex items-center space-x-2 bg-amber-500/10 text-amber-400 border border-amber-500/40 hover:bg-amber-500/20">
+                        <span id="mode-icon">👤</span>
+                        <span id="mode-text">HUMAN (CLICK FOR FULL AI)</span>
+                    </button>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <button id="scan-toggle-btn" onclick="toggleScan()" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30">
+                        🟢 SCANNING
+                    </button>
+                    <a id="sheet-link-btn" href="#" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-cyan-500/10 text-cyancyan border border-cyan-500/30 hover:bg-cyan-500/20 flex items-center space-x-1">
+                        <span>📊</span>
+                        <span>SHEETS</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+        <!-- 6 Micro-Agents Status Dashboard Grid -->
+        <section>
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-bold tracking-widest uppercase font-mono text-slate-400 flex items-center space-x-2">
+                    <span class="inline-block w-2 h-2 rounded-full bg-cyancyan animate-pulse"></span>
+                    <span>6 QUANT MICRO-AGENTS REAL-TIME STATUS</span>
+                </h2>
+                <span class="text-xs text-slate-500 font-mono" id="last-sync-time">SYNC: --:--:--</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
+                <!-- Agent 1: Scanner -->
+                <div class="bg-cybercard p-3 rounded-xl glow-border">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono font-semibold text-slate-400">01. SCANNER</span>
+                        <span id="agent-scanner-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">ACTIVE</span>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono" id="agent-scanner-detail">5 Pairs | 15m/5m/1h</div>
+                    <div class="text-[11px] text-slate-500 mt-1">Binance 24/7 SMC Stream</div>
+                </div>
+
+                <!-- Agent 2: Filter -->
+                <div class="bg-cybercard p-3 rounded-xl glow-border">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono font-semibold text-slate-400">02. FILTER</span>
+                        <span id="agent-filter-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">CLEAR</span>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono" id="agent-filter-detail">F&G: Neutral | Macro OK</div>
+                    <div class="text-[11px] text-slate-500 mt-1">Macro Shield & Sentiment</div>
+                </div>
+
+                <!-- Agent 3: Sizer -->
+                <div class="bg-cybercard p-3 rounded-xl glow-border">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono font-semibold text-slate-400">03. SIZER</span>
+                        <span id="agent-sizer-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">ARMED</span>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono" id="agent-sizer-detail">$20 1R | Daily $50 Cap</div>
+                    <div class="text-[11px] text-slate-500 mt-1">Volatility ATR Risk Guard</div>
+                </div>
+
+                <!-- Agent 4: Executor -->
+                <div class="bg-cybercard p-3 rounded-xl glow-border">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono font-semibold text-slate-400">04. EXECUTOR</span>
+                        <span id="agent-executor-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-400">HUMAN</span>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono" id="agent-executor-detail">Delta / Paper Engine</div>
+                    <div class="text-[11px] text-slate-500 mt-1">Direct Market Execution</div>
+                </div>
+
+                <!-- Agent 5: Logger -->
+                <div class="bg-cybercard p-3 rounded-xl glow-border">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono font-semibold text-slate-400">05. LOGGER</span>
+                        <span id="agent-logger-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">SYNCED</span>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono" id="agent-logger-detail">Telegram + 4-Tab Sheet</div>
+                    <div class="text-[11px] text-slate-500 mt-1">Audit Ledger & Rotation</div>
+                </div>
+
+                <!-- Agent 6: Equity -->
+                <div class="bg-cybercard p-3 rounded-xl glow-border">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono font-semibold text-slate-400">06. EQUITY</span>
+                        <span id="agent-equity-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">HEALTHY</span>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono" id="agent-equity-detail">WR: --% | PnL: $0.00</div>
+                    <div class="text-[11px] text-slate-500 mt-1">Capital Preservation Guard</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Positions & Pending Approvals Section -->
+        <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Open Positions Table (2 Cols) -->
+            <div class="lg:col-span-2 bg-cybercard rounded-2xl p-5 glow-border space-y-4">
+                <div class="flex items-center justify-between border-b border-cyberborder pb-3">
+                    <div class="flex items-center space-x-2">
+                        <span class="text-lg">💼</span>
+                        <h3 class="text-base font-bold font-mono tracking-wider uppercase text-white">LIVE ACTIVE POSITIONS</h3>
+                        <span id="open-pos-count" class="px-2 py-0.5 rounded text-xs font-mono bg-cyan-500/20 text-cyancyan">0 OPEN</span>
+                    </div>
+                    <button onclick="fetchLatestData()" class="text-xs font-mono text-slate-400 hover:text-white transition flex items-center space-x-1">
+                        <span>🔄</span>
+                        <span>REFRESH</span>
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs font-mono">
+                        <thead class="bg-cyberdark text-slate-400 uppercase tracking-wider border-b border-cyberborder">
+                            <tr>
+                                <th class="p-2.5">Asset</th>
+                                <th class="p-2.5">Side</th>
+                                <th class="p-2.5">Entry</th>
+                                <th class="p-2.5">Stop / BE</th>
+                                <th class="p-2.5">Target</th>
+                                <th class="p-2.5">Stage</th>
+                                <th class="p-2.5 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="open-positions-tbody" class="divide-y divide-cyberborder">
+                            <tr>
+                                <td colspan="7" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pending Approvals Section (Shows in HUMAN mode) -->
+                <div id="pending-section" class="border-t border-cyberborder pt-4 mt-2">
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-xs font-bold font-mono uppercase tracking-wider text-amber-400 flex items-center space-x-2">
+                            <span>⏳</span>
+                            <span>PENDING HUMAN APPROVAL SETUPS</span>
+                        </h4>
+                        <span id="pending-count-badge" class="text-xs font-mono text-slate-400">0 PENDING</span>
+                    </div>
+                    <div id="pending-container" class="space-y-2">
+                        <div class="text-xs text-slate-500 italic p-2 text-center bg-cyberdark rounded-lg">No pending trade confirmations.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Equity Curve Chart & Adaptive Parameters (1 Col) -->
+            <div class="bg-cybercard rounded-2xl p-5 glow-border space-y-4 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between border-b border-cyberborder pb-3 mb-3">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-lg">📈</span>
+                            <h3 class="text-base font-bold font-mono tracking-wider uppercase text-white">EQUITY CURVE</h3>
+                        </div>
+                        <span id="chart-net-pnl" class="text-xs font-bold font-mono text-emerald-400">+$0.00</span>
+                    </div>
+
+                    <div class="h-44 w-full">
+                        <canvas id="equityChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Adaptive Tuner Status Panel -->
+                <div class="bg-cyberdark p-3.5 rounded-xl border border-cyberborder space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-mono font-bold text-cyanpurple uppercase">🧠 AI ADAPTIVE PARAMETERS</span>
+                        <button onclick="triggerTuner()" class="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-cyanpurple hover:bg-purple-500/30 transition">OPTIMIZE NOW</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
+                            <div class="text-[10px] text-slate-400 mono-font">DISP ATR</div>
+                            <div class="text-xs font-bold text-white mono-font" id="tune-disp">1.2x</div>
+                        </div>
+                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
+                            <div class="text-[10px] text-slate-400 mono-font">TARGET RR</div>
+                            <div class="text-xs font-bold text-white mono-font" id="tune-rr">2.0R</div>
+                        </div>
+                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
+                            <div class="text-[10px] text-slate-400 mono-font">SWEEP ATR</div>
+                            <div class="text-xs font-bold text-white mono-font" id="tune-sweep">0.10</div>
+                        </div>
+                    </div>
+                    <div class="text-[11px] text-slate-400 italic truncate" id="tune-rationale">Institutional Baseline Settings active</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Terminal Log Box ($ tail -f live.log) -->
+        <section class="bg-cybercard rounded-2xl p-5 glow-border space-y-3">
+            <div class="flex items-center justify-between border-b border-cyberborder pb-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-cyancyan font-bold font-mono">$</span>
+                    <h3 class="text-base font-bold font-mono tracking-wider uppercase text-white">LIVE STREAMING TERMINAL (tail -f live.log)</h3>
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="clearTerminalLogs()" class="px-2.5 py-1 text-xs font-mono rounded bg-slate-800 text-slate-300 hover:bg-slate-700 transition">CLEAR</button>
+                    <label class="flex items-center space-x-1.5 text-xs font-mono text-slate-400 cursor-pointer">
+                        <input type="checkbox" id="autoscroll-chk" checked class="rounded bg-cyberdark border-slate-700 text-cyancyan focus:ring-0">
+                        <span>AUTO-SCROLL</span>
+                    </label>
+                </div>
+            </div>
+
+            <div id="terminal-box" class="h-64 overflow-y-auto bg-cyberdark/95 p-4 rounded-xl font-mono text-xs text-slate-300 space-y-1 border border-cyberborder shadow-inner scanlines">
+                <div class="text-slate-500">[SYSTEM] Terminal initialized. Subscribing to live WebSocket telemetry stream...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-cyberborder py-4 text-center text-xs font-mono text-slate-500">
+        QUANTUM SMC TRADING CORE v2.0 // INSTITUTIONAL LIQUIDITY SWEEP ENGINE // ZERO BREAKDOWN RESILIENCE
+    </footer>
+
+    <script>
+        // --- Core Application State & WebSocket Listener ---
+        let currentMode = "HUMAN";
+        let isScanning = true;
+        let equityChartInstance = null;
+        let ws = null;
+
+        // Initialize Equity Curve Line Chart
+        function initChart() {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            equityChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Start'],
+                    datasets: [{
+                        label: 'Realized Cumulative PnL ($)',
+                        data: [0],
+                        borderColor: '#00e5ff',
+                        backgroundColor: 'rgba(0, 229, 255, 0.08)',
+                        fill: true,
+                        tension: 0.3,
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Establish WebSocket Connection with Auto-Reconnect
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/terminal`;
+            const badge = document.getElementById('ws-badge');
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                badge.innerText = 'ONLINE // LIVE STREAM';
+                badge.className = 'px-2 py-0.5 text-xs font-mono rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                appendLog({ time: new Date().toLocaleTimeString(), level: 'INFO', msg: 'WebSocket telemetry link established.' });
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'SNAPSHOT' || data.type === 'REFRESH') {
+                        if (data.execution_mode) updateModeUI(data.execution_mode);
+                        if (data.agents) updateAgentsUI(data.agents);
+                        if (data.open_positions) renderOpenPositions(data.open_positions);
+                        if (data.pending_approvals) renderPendingApprovals(data.pending_approvals);
+                        if (data.logs && Array.isArray(data.logs)) {
+                            data.logs.forEach(appendLog);
+                        }
+                    } else if (data.type === 'MODE_CHANGE') {
+                        updateModeUI(data.execution_mode);
+                    }
+                } catch (e) {
+                    console.error('WS Parse Error', e);
+                }
+            };
+
+            ws.onclose = () => {
+                badge.innerText = 'DISCONNECTED // RETRYING';
+                badge.className = 'px-2 py-0.5 text-xs font-mono rounded bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        // Mode Switch Handler
+        function updateModeUI(mode) {
+            currentMode = mode.toUpperCase();
+            const btn = document.getElementById('mode-btn');
+            const icon = document.getElementById('mode-icon');
+            const text = document.getElementById('mode-text');
+            const executorBadge = document.getElementById('agent-executor-badge');
+
+            if (currentMode === 'AUTONOMOUS') {
+                btn.className = 'px-4 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-300 flex items-center space-x-2 bg-emerald-500/20 text-cyangreen border border-cyangreen shadow-neon-green';
+                icon.innerText = '🤖';
+                text.innerText = 'AUTONOMOUS AI (FULL)';
+                if (executorBadge) {
+                    executorBadge.innerText = 'AUTONOMOUS';
+                    executorBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-cyangreen';
+                }
+            } else {
+                btn.className = 'px-4 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-300 flex items-center space-x-2 bg-amber-500/10 text-amber-400 border border-amber-500/40 hover:bg-amber-500/20';
+                icon.innerText = '👤';
+                text.innerText = 'HUMAN (CLICK FOR FULL AI)';
+                if (executorBadge) {
+                    executorBadge.innerText = 'HUMAN';
+                    executorBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-400';
+                }
+            }
+        }
+
+        async function toggleMode() {
+            try {
+                const res = await fetch('/api/control/toggle-mode', { method: 'POST' });
+                const data = await res.json();
+                if (data.execution_mode) {
+                    updateModeUI(data.execution_mode);
+                }
+            } catch (err) {
+                console.error('Mode toggle failed', err);
+            }
+        }
+
+        async function toggleScan() {
+            const endpoint = isScanning ? '/api/control/pause' : '/api/control/resume';
+            try {
+                const res = await fetch(endpoint, { method: 'POST' });
+                const data = await res.json();
+                isScanning = data.scanning_active;
+                const btn = document.getElementById('scan-toggle-btn');
+                if (isScanning) {
+                    btn.innerText = '🟢 SCANNING';
+                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30';
+                } else {
+                    btn.innerText = '🛑 PAUSED';
+                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30';
+                }
+            } catch (err) {
+                console.error('Scan toggle failed', err);
+            }
+        }
+
+        // Render Micro-Agents
+        function updateAgentsUI(agents) {
+            document.getElementById('last-sync-time').innerText = `SYNC: ${new Date().toLocaleTimeString()}`;
+            if (agents.scanner) {
+                document.getElementById('agent-scanner-detail').innerText = agents.scanner.detail;
+            }
+            if (agents.filter) {
+                document.getElementById('agent-filter-detail').innerText = agents.filter.detail;
+            }
+            if (agents.sizer) {
+                document.getElementById('agent-sizer-detail').innerText = agents.sizer.detail;
+            }
+            if (agents.executor) {
+                document.getElementById('agent-executor-detail').innerText = agents.executor.detail;
+            }
+            if (agents.logger) {
+                document.getElementById('agent-logger-detail').innerText = agents.logger.detail;
+            }
+            if (agents.equity) {
+                document.getElementById('agent-equity-detail').innerText = agents.equity.detail;
+            }
+        }
+
+        // Render Open Positions
+        function renderOpenPositions(positions) {
+            const tbody = document.getElementById('open-positions-tbody');
+            const countBadge = document.getElementById('open-pos-count');
+            countBadge.innerText = `${positions.length} OPEN`;
+
+            if (!positions || positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td></tr>';
+                return;
+            }
+
+            let html = '';
+            positions.forEach(p => {
+                const isLong = (p.direction || '').toUpperCase() === 'LONG';
+                const sideColor = isLong ? 'text-cyangreen bg-emerald-500/10 border-emerald-500/30' : 'text-cyanpink bg-rose-500/10 border-rose-500/30';
+                const entry = parseFloat(p.entry_price || 0).toFixed(4);
+                const sl = parseFloat(p.stop_loss || 0).toFixed(4);
+                const tp = parseFloat(p.tp1 || 0).toFixed(4);
+                const stage = p.stage || 'OPEN';
+
+                html += `
+                <tr class="hover:bg-cyberdark/50 transition">
+                    <td class="p-2.5 font-bold text-white">${p.symbol}</td>
+                    <td class="p-2.5"><span class="px-2 py-0.5 rounded border text-[11px] ${sideColor}">${p.direction}</span></td>
+                    <td class="p-2.5 text-slate-300">$${entry}</td>
+                    <td class="p-2.5 text-slate-300">$${sl}</td>
+                    <td class="p-2.5 text-cyancyan">$${tp}</td>
+                    <td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">${stage}</span></td>
+                    <td class="p-2.5 text-right">
+                        <button onclick="closeEarly('${p.trade_id}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 text-[11px] transition">
+                            🛑 CLOSE
+                        </button>
+                    </td>
+                </tr>
+                `;
+            });
+            tbody.innerHTML = html;
+        }
+
+        // Render Pending Approvals
+        function renderPendingApprovals(pending) {
+            const container = document.getElementById('pending-container');
+            const badge = document.getElementById('pending-count-badge');
+            const keys = Object.keys(pending || {});
+            badge.innerText = `${keys.length} PENDING`;
+
+            if (keys.length === 0) {
+                container.innerHTML = '<div class="text-xs text-slate-500 italic p-2 text-center bg-cyberdark rounded-lg">No pending trade confirmations.</div>';
+                return;
+            }
+
+            let html = '';
+            keys.forEach(tid => {
+                const p = pending[tid];
+                const isLong = (p.direction || '').toUpperCase() === 'LONG';
+                const sideColor = isLong ? 'text-cyangreen' : 'text-cyanpink';
+
+                html += `
+                <div class="flex items-center justify-between p-2.5 bg-cyberdark rounded-xl border border-cyberborder">
+                    <div>
+                        <div class="font-bold text-white text-xs">${p.symbol} <span class="${sideColor}">[${p.direction} ${p.timeframe || ''}]</span></div>
+                        <div class="text-[10px] text-slate-400">Entry: $${p.entry_price} | SL: $${p.stop_loss} | Grade: <span class="text-cyancyan">${p.ai_grade || 'A'}</span></div>
+                    </div>
+                    <div class="flex items-center space-x-1.5">
+                        <button onclick="approveTrade('${tid}')" class="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/40 text-xs font-bold transition">🟢 APPROVE</button>
+                        <button onclick="rejectTrade('${tid}')" class="px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-white text-xs transition">🔴 SKIP</button>
+                    </div>
+                </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        async function approveTrade(tradeId) {
+            try {
+                await fetch(`/api/paper/approve/${tradeId}`, { method: 'POST' });
+                fetchLatestData();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function rejectTrade(tradeId) {
+            try {
+                await fetch(`/api/paper/reject/${tradeId}`, { method: 'POST' });
+                fetchLatestData();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function closeEarly(tradeId) {
+            if (!confirm('Close position early at current market price?')) return;
+            try {
+                await fetch(`/api/paper/close/${tradeId}`, { method: 'POST' });
+                fetchLatestData();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // Terminal Log Appender
+        function appendLog(item) {
+            const box = document.getElementById('terminal-box');
+            const line = document.createElement('div');
+            line.className = 'leading-relaxed hover:bg-white/5 px-1 rounded';
+
+            let lvlColor = 'text-slate-400';
+            if (item.level === 'WARNING') lvlColor = 'text-cyanyellow font-semibold';
+            if (item.level === 'ERROR' || item.level === 'CRITICAL') lvlColor = 'text-cyanpink font-bold';
+            if (item.level === 'INFO') lvlColor = 'text-cyancyan';
+
+            line.innerHTML = `<span class="text-slate-500">[${item.time || ''}]</span> <span class="${lvlColor}">${item.level || 'LOG'}</span>: ${escapeHtml(item.msg || '')}`;
+            box.appendChild(line);
+
+            if (document.getElementById('autoscroll-chk').checked) {
+                box.scrollTop = box.scrollHeight;
+            }
+        }
+
+        function clearTerminalLogs() {
+            document.getElementById('terminal-box').innerHTML = '<div class="text-slate-500">[SYSTEM] Terminal logs cleared.</div>';
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // Fetch Full Data Snapshot
+        async function fetchLatestData() {
+            try {
+                const [statusRes, paperRes, agentsRes, tunerRes] = await Promise.all([
+                    fetch('/api/status').then(r => r.json()),
+                    fetch('/api/paper').then(r => r.json()),
+                    fetch('/api/agents').then(r => r.json()),
+                    fetch('/api/adaptive-config').then(r => r.json()),
+                ]);
+
+                if (statusRes.sheet_link) {
+                    document.getElementById('sheet-link-btn').href = statusRes.sheet_link;
+                }
+                updateAgentsUI(agentsRes);
+                renderOpenPositions(paperRes.open_positions);
+                renderPendingApprovals(paperRes.pending_setups);
+
+                // Update Adaptive Panel
+                if (tunerRes) {
+                    document.getElementById('tune-disp').innerText = `${tunerRes.min_displacement_atr}x`;
+                    document.getElementById('tune-rr').innerText = `${tunerRes.target_rr}R`;
+                    document.getElementById('tune-sweep').innerText = `${tunerRes.min_sweep_atr}`;
+                    document.getElementById('tune-rationale').innerText = tunerRes.tuning_rationale || 'Baseline settings';
+                }
+
+                // Update Equity Chart
+                if (paperRes.closed_positions && equityChartInstance) {
+                    let cum = 0;
+                    const labels = ['Start'];
+                    const dataPoints = [0];
+                    paperRes.closed_positions.forEach((cp, idx) => {
+                        cum += parseFloat(cp.total_pnl_usd || 0);
+                        labels.push(`Trade ${idx + 1}`);
+                        dataPoints.push(cum);
+                    });
+                    equityChartInstance.data.labels = labels;
+                    equityChartInstance.data.datasets[0].data = dataPoints;
+                    equityChartInstance.update();
+                    document.getElementById('chart-net-pnl').innerText = `${cum >= 0 ? '+' : ''}$${cum.toFixed(2)}`;
+                    document.getElementById('chart-net-pnl').className = `text-xs font-bold font-mono ${cum >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+                }
+            } catch (e) {
+                console.error('Fetch latest data error', e);
+            }
+        }
+
+        async function triggerTuner() {
+            try {
+                appendLog({ time: new Date().toLocaleTimeString(), level: 'INFO', msg: 'Manual Adaptive Logic Self-Tuning requested...' });
+                const res = await fetch('/api/control/run-tuner', { method: 'POST' });
+                const data = await res.json();
+                appendLog({ time: new Date().toLocaleTimeString(), level: 'INFO', msg: `Tuning Complete: ${data.adaptive_config.tuning_rationale}` });
+                fetchLatestData();
+            } catch (e) {
+                console.error('Tuner error', e);
+            }
+        }
+
+        // Initialize on DOM Ready
+        window.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            connectWebSocket();
+            fetchLatestData();
+            setInterval(fetchLatestData, 10000);
+        });
+    </script>
+</body>
+</html>
+

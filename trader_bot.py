@@ -85,6 +85,12 @@ from engine_macro_filter import get_crypto_sentiment, check_macro_event_block
 from engine_whale_tracker import get_whale_derivatives_data
 from engine_paper_broker import PAPER_BROKER, PaperBroker
 from engine_delta_broker import DELTA_BROKER, DeltaTestnetBroker
+from engine_adaptive_tuner import (
+    load_adaptive_config,
+    save_adaptive_config,
+    apply_adaptive_config_to_strategy,
+    run_adaptive_self_tuning,
+)
 
 
 # =============================================================================
@@ -233,6 +239,9 @@ CFG = StrategyConfig(
     stop_buffer_atr=env_float("STOP_BUFFER_ATR", 0.25),
     rr=env_float("RR", 2.0),
 )
+
+# Apply dynamic / learned parameters from adaptive_config.json if present
+apply_adaptive_config_to_strategy(CFG)
 
 # =============================================================================
 # LOGGING / SHUTDOWN / EXCEPTION HOOKS
@@ -2207,7 +2216,22 @@ SHEET_HEADERS = {
         "Timestamp", "Trade ID", "Symbol", "Direction", "Entry Price",
         "Exit Price", "Quantity", "Realized PnL ($)", "Realized R", "Exit Outcome", "Duration"
     ],
+    "Live_Positions": [
+        "Timestamp", "Trade ID", "Symbol", "Direction", "Entry Price",
+        "Current Price", "Stop Loss", "Target", "Quantity", "Unrealized PnL ($)", "Stage", "Mode"
+    ],
+    "Trade_Journal": [
+        "Timestamp", "Trade ID", "Symbol", "Direction", "Entry Price",
+        "Exit Price", "Quantity", "Realized PnL ($)", "Realized R", "Exit Reason", "Duration", "AI Grade", "Execution Mode"
+    ],
+    "AI_Self_Tuning_Log": [
+        "Timestamp", "Displacement ATR", "Target RR", "Sweep ATR", "Win Rate (%)", "Avg R", "Sample Trades", "Tuning Rationale"
+    ],
     "Daily Summary": [
+        "Date", "Scan Cycles", "Errors", "Assets Scanned", "Market Status (day change)",
+        "Bias", "Setups Triggered", "Setup Details"
+    ],
+    "Daily_Summary": [
         "Date", "Scan Cycles", "Errors", "Assets Scanned", "Market Status (day change)",
         "Bias", "Setups Triggered", "Setup Details"
     ],
@@ -2367,6 +2391,7 @@ def load_state() -> dict:
         "custom_welcome": "",
         "stories": {},
         "active_stream": {},
+        "execution_mode": env_str("EXECUTION_MODE", "HUMAN").upper(),
     }
     try:
         if STATE_FILE.exists():
@@ -2377,6 +2402,22 @@ def load_state() -> dict:
     except Exception as exc:
         log.warning("State file unreadable (%s) - starting fresh.", exc)
     return default
+
+
+def get_execution_mode() -> str:
+    """Returns the current execution mode: 'HUMAN' or 'AUTONOMOUS'."""
+    st = load_state()
+    return st.get("execution_mode", "HUMAN").upper()
+
+
+def set_execution_mode(mode: str) -> str:
+    """Updates and persists the system execution mode ('HUMAN' or 'AUTONOMOUS')."""
+    norm = "AUTONOMOUS" if "AUTO" in (mode or "").upper() else "HUMAN"
+    st = load_state()
+    st["execution_mode"] = norm
+    save_state(st)
+    log.info("System execution mode updated to: %s", norm)
+    return norm
 
 
 def save_state(state: dict) -> None:
@@ -2447,6 +2488,28 @@ def roll_day_if_needed(state: dict, now: datetime, client: Optional[BinanceClien
                 send_telegram(screener_msg, parse_mode="Markdown")
             except Exception as s_exc:
                 log.warning("Daily morning screener dispatch failed: %s", s_exc)
+
+        # Autonomous Engine: Nightly AI Adaptive Logic Self-Tuning & Quant Optimization
+        try:
+            log.info("Day rollover: Initiating AI Adaptive Logic Self-Tuning...")
+            closed_trades = PAPER_BROKER.get_closed_positions()
+            new_cfg, tune_row = run_adaptive_self_tuning(closed_trades, groq_api_key=GROQ_API_KEY, groq_model=GROQ_MODEL)
+            apply_adaptive_config_to_strategy(CFG)
+            if tune_row:
+                queue_row(state, "AI_Self_Tuning_Log", tune_row)
+                if telegram_configured():
+                    send_telegram(
+                        f"🧠 *NIGHTLY AI ADAPTIVE LOGIC SELF-TUNING*\n\n"
+                        f"• *Displacement ATR:* `{new_cfg.get('min_displacement_atr')}x`\n"
+                        f"• *Target RR:* `{new_cfg.get('target_rr')}R`\n"
+                        f"• *Sweep ATR:* `{new_cfg.get('min_sweep_atr')}`\n"
+                        f"• *Total Tunings:* `{new_cfg.get('total_tunings')}`\n"
+                        f"• *Rationale:* _{new_cfg.get('tuning_rationale')}_\n\n"
+                        f"StrategyConfig dynamically updated & synced to `AI_Self_Tuning_Log`.",
+                        parse_mode="Markdown"
+                    )
+        except Exception as tune_err:
+            log.warning("Nightly AI self-tuning error: %s", tune_err)
 
         state["stats"] = new_stats()
         try:
@@ -2598,8 +2661,12 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
     is_high_conf = is_high_confidence_setup(ai_data)
     setup_status = f"Grade {grade} ({score}/100)" if ai_data else "Raw Strategy Setup"
 
-    # Register pending paper trade & generate Interactive Telegram Buttons
+    # Register pending paper trade & determine execution flow based on Mode
     trade_id = f"{setup.symbol}_{int(time.time())}"
+    exec_mode = get_execution_mode()
+    auto_executed = False
+    reply_markup = None
+
     if setup.exit_plan and setup.risk_data and setup.risk_data.get("status") == "PASS":
         registered = PAPER_BROKER.register_pending_setup(
             trade_id=trade_id,
@@ -2616,17 +2683,30 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
             sim_win_prob=setup.sim_data.get("target_win_prob", "N/A") if setup.sim_data else "N/A",
         )
         if registered:
-            reply_markup = {
-                "inline_keyboard": [
-                    [
-                        {"text": "🟢 Approve Paper Trade", "callback_data": f"paper_approve_{trade_id}"},
-                        {"text": "🔴 Reject / Skip", "callback_data": f"paper_reject_{trade_id}"},
+            score_num = float(score) if str(score).replace(".", "").isdigit() else 0.0
+            if exec_mode == "AUTONOMOUS" and score_num >= 75.0 and any(g in str(grade) for g in ("Grade A", "Grade A+")):
+                trade = PAPER_BROKER.approve_trade(trade_id)
+                if trade and trade.get("status") != "BLOCKED":
+                    delta_res = DELTA_BROKER.execute_approved_trade(trade)
+                    auto_executed = True
+                    reply_markup = None
+                    log.info("🤖 AUTONOMOUS ZERO-TOUCH EXECUTION: %s %s trade_id=%s executed on broker", setup.symbol, setup.direction, trade_id)
+                else:
+                    reply_markup = None
+            else:
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "🟢 Approve Paper Trade", "callback_data": f"paper_approve_{trade_id}"},
+                            {"text": "🔴 Reject / Skip", "callback_data": f"paper_reject_{trade_id}"},
+                        ]
                     ]
-                ]
-            }
+                }
 
     # 7. Always dispatch Telegram Photo Alert with full AI suggestions, Monte Carlo odds, and buttons!
     msg = format_alert(setup, now, is_high_conf=is_high_conf)
+    if auto_executed:
+        msg = "🤖 *AUTONOMOUS ZERO-TOUCH TRADE EXECUTED (AI FULL AUTONOMY)*\n⚡ _Order executed immediately based on Grade A/A+ criteria_\n\n" + msg
     sent = send_telegram_chart_alert(msg, photo_url=chart_url, parse_mode="Markdown", reply_markup=reply_markup)
     if not sent and telegram_configured():
         sent = send_telegram(msg, reply_markup=reply_markup)        # retry plain text without parse_mode if Markdown parsing failed
@@ -3640,6 +3720,20 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                         if cb_mid and cb_chat:
                             telegram_edit_reply_markup(cb_chat, cb_mid, {"inline_keyboard": [[{"text": f"❌ Trade Skipped by {cb_from}", "callback_data": "none"}]]})
                         send_telegram(f"🔴 *Setup Skipped / Rejected by {cb_from}.*", chat_id=cb_chat, parse_mode="Markdown")
+                    elif cb_data in ("mode_set_autonomous", "mode_set_human"):
+                        target_m = "AUTONOMOUS" if cb_data == "mode_set_autonomous" else "HUMAN"
+                        new_mode = set_execution_mode(target_m)
+                        state["execution_mode"] = new_mode
+                        if cb_mid and cb_chat:
+                            telegram_edit_reply_markup(cb_chat, cb_mid, {"inline_keyboard": [[{"text": f"✅ Active Mode: {new_mode}", "callback_data": "none"}]]})
+                        send_telegram(
+                            f"🔄 *System Execution Mode Switched!*\n\n"
+                            f"• *Active Mode:* `{new_mode}`\n"
+                            f"• *Changed By:* {cb_from}\n"
+                            f"• *Behavior:* {'🤖 AI will execute Grade A/A+ setups with zero confirmation.' if new_mode == 'AUTONOMOUS' else '👤 Human confirmation required for all trades via buttons.'}",
+                            chat_id=cb_chat,
+                            parse_mode="Markdown",
+                        )
                     continue
 
                 msg = update.get("message") or update.get("channel_post")
@@ -4447,6 +4541,19 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     or "market sentiment" in clean_lower
                 )
 
+                is_mode_cmd = (
+                    cmd in ("/mode", "mode", "/toggle_mode", "toggle_mode", "/autonomy", "autonomy")
+                    or "execution mode" in clean_lower
+                    or "autonomous mode" in clean_lower
+                    or "human mode" in clean_lower
+                )
+
+                is_tuner_cmd = (
+                    cmd in ("/tune", "tune", "/tuner", "tuner", "/optimize", "optimize")
+                    or "adaptive config" in clean_lower
+                    or "self tuning" in clean_lower
+                )
+
                 is_help_cmd = (
                     cmd in ("/help", "help")
                 )
@@ -4461,7 +4568,44 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                     or clean_lower.startswith("/tado")
                 )
 
-                if is_paper_cmd:
+                if is_mode_cmd:
+                    curr_m = get_execution_mode()
+                    mode_msg = (
+                        f"⚙️ *MASTER EXECUTION MODE TOGGLE*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"• *Current Active Mode:* `{curr_m}`\n\n"
+                        f"👤 *HUMAN-IN-THE-LOOP (Semi-Auto):*\n"
+                        f"AI scans & grades setups $\\rightarrow$ Sends `[Approve]` / `[Reject]` buttons $\\rightarrow$ Requires manual click to execute on broker.\n\n"
+                        f"🤖 *AUTONOMOUS MODE (Full AI Autonomy):*\n"
+                        f"Grade A / A+ setups with $\\ge$75 confidence execute *instantly* with zero manual taps. Dynamic exits and breakeven managed autonomously.\n\n"
+                        f"Click below to switch:"
+                    )
+                    markup = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "🤖 Switch to Full Autonomous AI", "callback_data": "mode_set_autonomous"},
+                                {"text": "👤 Switch to Human Approval", "callback_data": "mode_set_human"},
+                            ]
+                        ]
+                    }
+                    send_telegram(mode_msg, chat_id=chat_id, parse_mode="Markdown", reply_markup=markup)
+                    continue
+                elif is_tuner_cmd:
+                    cfg = load_adaptive_config()
+                    tuner_msg = (
+                        f"🧠 *AI ADAPTIVE LOGIC STATUS*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"• *Min Displacement ATR:* `{cfg.get('min_displacement_atr')}x`\n"
+                        f"• *Target RR:* `{cfg.get('target_rr')}R`\n"
+                        f"• *Min Sweep ATR:* `{cfg.get('min_sweep_atr')}`\n"
+                        f"• *Total Tunings:* `{cfg.get('total_tunings')}`\n"
+                        f"• *Last Tuned:* `{cfg.get('last_tuned_at') or 'Baseline'}`\n"
+                        f"• *Rationale:* _{cfg.get('tuning_rationale')}_\n\n"
+                        f"_System autonomously adapts parameters at 00:00 UTC rollover._"
+                    )
+                    send_telegram(tuner_msg, chat_id=chat_id, parse_mode="Markdown")
+                    continue
+                elif is_paper_cmd:
                     summary = PAPER_BROKER.get_summary_text()
                     send_telegram(summary, chat_id=chat_id, parse_mode="Markdown")
                 elif is_screener_cmd:
@@ -4746,6 +4890,90 @@ def run_test() -> int:
     return 0
 
 
+def evaluate_autonomous_dynamic_exit(pos: Dict[str, Any], client: BinanceClient, state: dict) -> None:
+    """
+    Autonomous Trade Lifecycle: Dynamic Exit, Opposing MSS Shield & Breakeven Migration.
+    Runs periodically for open positions in AUTONOMOUS mode.
+    If an opposing market structure shift (MSS) occurs, closes early to protect capital.
+    If profit >= 1.2R, secures stop-loss at breakeven.
+    """
+    trade_id = pos.get("trade_id")
+    sym = pos.get("symbol")
+    direction = pos.get("direction", "LONG").upper()
+    entry = float(pos.get("entry_price", 0.0))
+    stop_loss = float(pos.get("stop_loss", 0.0))
+    if not trade_id or not sym or entry <= 0:
+        return
+
+    now_ts = time.time()
+    last_eval = pos.get("last_ai_eval_ts", 0)
+    # Check at most once every 60 seconds per position
+    if (now_ts - last_eval) < 60:
+        return
+    pos["last_ai_eval_ts"] = now_ts
+
+    try:
+        df_5m = client.klines(sym, "5m", 15)
+        if df_5m is None or len(df_5m) < 6:
+            return
+        cur_price = float(df_5m["close"].iloc[-1])
+        recent_high = float(df_5m["high"].iloc[-6:-1].max())
+        recent_low = float(df_5m["low"].iloc[-6:-1].min())
+        latest_close = float(df_5m["close"].iloc[-1])
+
+        # Opposing Market Structure Shift (MSS) detection
+        opposing_mss = False
+        mss_reason = ""
+        if direction == "LONG":
+            if latest_close < recent_low and cur_price < entry:
+                opposing_mss = True
+                mss_reason = f"Opposing Bearish MSS: 5m candle ({cur_price:.4f}) broke structure low {recent_low:.4f}"
+        else:  # SHORT
+            if latest_close > recent_high and cur_price > entry:
+                opposing_mss = True
+                mss_reason = f"Opposing Bullish MSS: 5m candle ({cur_price:.4f}) broke structure high {recent_high:.4f}"
+
+        if opposing_mss:
+            log.warning("🚨 Autonomous Dynamic Exit triggered on %s: %s", sym, mss_reason)
+            closed_event = PAPER_BROKER.close_position_early(trade_id, cur_price, reason=f"AI MSS Panic Exit: {mss_reason}")
+            if closed_event:
+                DELTA_BROKER.cancel_all_orders_for_symbol(sym)
+                send_telegram(
+                    f"🚨 *AI AUTONOMOUS DYNAMIC EXIT (CAPITAL SHIELD)*\n\n"
+                    f"• Symbol: *{sym} ({direction})*\n"
+                    f"• Reason: `{mss_reason}`\n"
+                    f"• Exit Price: `${cur_price:,.4f}`\n"
+                    f"• Realized PnL: `${closed_event.get('total_pnl_usd', 0):+.2f}`\n"
+                    f"_Trade aborted before hit of hard stop-loss._",
+                    parse_mode="Markdown"
+                )
+                return
+
+        # Autonomous Stop-to-Breakeven migration
+        is_long = direction == "LONG"
+        r_dist = abs(entry - stop_loss)
+        if r_dist > 0:
+            current_gain = (cur_price - entry) if is_long else (entry - cur_price)
+            current_r = current_gain / r_dist
+            current_stage = pos.get("stage", "OPEN")
+            if current_r >= 1.2 and current_stage in ("OPEN", "PENDING"):
+                upd = PAPER_BROKER.update_position_stop(trade_id, new_stop=entry, stage="BE")
+                if upd:
+                    c_size = DELTA_BROKER.normalize_contract_size(sym, float(pos.get("remaining_qty", pos.get("quantity", 1.0))))
+                    close_side = "sell" if is_long else "buy"
+                    DELTA_BROKER.update_stop_loss_to_breakeven(sym, c_size, close_side, entry)
+                    send_telegram(
+                        f"🛡️ *AI AUTONOMOUS STOP-LOSS MIGRATED TO BREAKEVEN*\n\n"
+                        f"• Symbol: *{sym} ({direction})*\n"
+                        f"• Current Profit: `+{current_r:.2f}R`\n"
+                        f"• Protected Entry: `${entry:,.4f}`\n"
+                        f"_Risk-free runner status activated._",
+                        parse_mode="Markdown"
+                    )
+    except Exception as d_exc:
+        log.warning("Dynamic exit eval error for %s: %s", sym, d_exc)
+
+
 def paper_position_tracker_loop(client: BinanceClient, state: dict) -> None:
     """Continuously evaluates open paper trades against live prices every 10 seconds."""
     log.info("Paper position real-time tracking thread started (10s interval)...")
@@ -4777,6 +5005,12 @@ def paper_position_tracker_loop(client: BinanceClient, state: dict) -> None:
                     tracker_cb.record_failure(fetch_err)
                 elif prices:
                     tracker_cb.record_success()
+
+                    # Autonomous dynamic exit evaluation
+                    if get_execution_mode() == "AUTONOMOUS":
+                        for pos_item in list(open_positions):
+                            evaluate_autonomous_dynamic_exit(pos_item, client, state)
+
                     events = PAPER_BROKER.update_positions(prices)
                     for pe in events:
                         send_telegram(pe["message"], parse_mode="Markdown")
@@ -4825,6 +5059,21 @@ def paper_position_tracker_loop(client: BinanceClient, state: dict) -> None:
                                 round(float(pe.get("realized_r", 0)), 2),
                                 pe.get("exit_reason", "N/A"),
                                 f"{int((time.time() - float(td.get('opened_at', time.time()))) // 60)} mins",
+                            ])
+                            queue_row(state, "Trade_Journal", [
+                                fmt_ts(datetime.now(LOCAL_TZ)),
+                                pe.get("trade_id", "N/A"),
+                                pe.get("symbol", "N/A"),
+                                pe.get("direction", "N/A"),
+                                round(float(td.get("entry_price", 0)), 6),
+                                round(float(pe.get("exit_price", 0)), 6),
+                                td.get("quantity", 0),
+                                round(float(pe.get("total_pnl_usd", 0)), 2),
+                                round(float(pe.get("realized_r", 0)), 2),
+                                pe.get("exit_reason", "N/A"),
+                                f"{int((time.time() - float(td.get('opened_at', time.time()))) // 60)} mins",
+                                td.get("ai_grade", "N/A"),
+                                get_execution_mode(),
                             ])
             else:
                 tracker_cb.record_success()
