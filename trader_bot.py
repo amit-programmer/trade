@@ -2717,7 +2717,8 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
         )
         if registered:
             score_num = float(score) if str(score).replace(".", "").isdigit() else 0.0
-            if exec_mode == "AUTONOMOUS" and score_num >= 75.0 and any(g in str(grade) for g in ("Grade A", "Grade A+")):
+            min_exec_conf = float(load_adaptive_config().get("min_confidence_score", 75.0))
+            if exec_mode == "AUTONOMOUS" and score_num >= min_exec_conf and any(g in str(grade) for g in ("Grade A", "Grade A+")):
                 trade = PAPER_BROKER.approve_trade(trade_id)
                 if trade and trade.get("status") != "BLOCKED":
                     delta_res = DELTA_BROKER.execute_approved_trade(trade)

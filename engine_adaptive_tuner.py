@@ -24,9 +24,37 @@ log = logging.getLogger("adaptive_tuner")
 BASE_DIR = Path(__file__).resolve().parent
 ADAPTIVE_CONFIG_FILE = BASE_DIR / "adaptive_config.json"
 
+# =============================================================================
+# STRICT HARD BOUNDS CLAMPING GUARD
+# =============================================================================
+# Prevents AI or statistical tuning loops from ever setting reckless or invalid parameters.
+PARAM_BOUNDS: Dict[str, Tuple[float, float]] = {
+    "min_displacement_atr": (1.0, 2.5),
+    "min_risk_reward": (1.5, 4.0),
+    "target_rr": (1.5, 4.0),
+    "min_confidence_score": (60.0, 90.0),
+    "min_sweep_atr": (0.08, 0.25),
+    "max_setup_age": (8.0, 18.0),
+}
+
+
+def clamp_parameter(name: str, value: Any, default: float) -> float:
+    """Clamps a numeric tuning parameter to its safe, strict institutional bounds."""
+    try:
+        val = float(value)
+    except (ValueError, TypeError):
+        val = default
+    if name in PARAM_BOUNDS:
+        low, high = PARAM_BOUNDS[name]
+        return max(low, min(high, val))
+    return val
+
+
 DEFAULT_ADAPTIVE_CONFIG: Dict[str, Any] = {
     "min_displacement_atr": 1.2,
     "target_rr": 2.0,
+    "min_risk_reward": 2.0,
+    "min_confidence_score": 75,
     "min_sweep_atr": 0.10,
     "max_setup_age": 12,
     "last_tuned_at": None,
@@ -37,14 +65,25 @@ DEFAULT_ADAPTIVE_CONFIG: Dict[str, Any] = {
 
 
 def load_adaptive_config() -> Dict[str, Any]:
-    """Loads adaptive_config.json with safe fallback to baseline defaults."""
+    """Loads adaptive_config.json with safe fallback and strict parameter bounds clamping."""
     if not ADAPTIVE_CONFIG_FILE.exists():
         save_adaptive_config(DEFAULT_ADAPTIVE_CONFIG)
         return dict(DEFAULT_ADAPTIVE_CONFIG)
     try:
         data = json.loads(ADAPTIVE_CONFIG_FILE.read_text(encoding="utf-8"))
+        raw_rr = data.get("min_risk_reward")
+        if raw_rr is None:
+            raw_rr = data.get("target_rr", 2.0)
         for k, v in DEFAULT_ADAPTIVE_CONFIG.items():
             data.setdefault(k, v)
+        # Apply strict clamping to loaded values to prevent manual corruption or out-of-range state
+        data["min_displacement_atr"] = round(clamp_parameter("min_displacement_atr", data.get("min_displacement_atr"), 1.2), 2)
+        rr_val = round(clamp_parameter("min_risk_reward", raw_rr, 2.0), 2)
+        data["target_rr"] = rr_val
+        data["min_risk_reward"] = rr_val
+        data["min_confidence_score"] = int(round(clamp_parameter("min_confidence_score", data.get("min_confidence_score", 75), 75)))
+        data["min_sweep_atr"] = round(clamp_parameter("min_sweep_atr", data.get("min_sweep_atr"), 0.10), 2)
+        data["max_setup_age"] = int(round(clamp_parameter("max_setup_age", data.get("max_setup_age"), 12)))
         return data
     except Exception as exc:
         log.warning("Failed to parse %s (%s). Reverting to defaults.", ADAPTIVE_CONFIG_FILE.name, exc)
@@ -120,17 +159,20 @@ def run_adaptive_self_tuning(
         "You are an institutional quantitative risk director and SMC trading algorithmic optimizer.\n"
         "Your task is to analyze recent live closed trade performance and determine whether to tighten or expand parameters.\n"
         "Rules:\n"
-        "1. If frequent Stop-Loss hits occur due to false sweeps or choppy fakeouts, increase min_displacement_atr (e.g. from 1.2 to 1.4-1.6) and min_sweep_atr.\n"
-        "2. If win rate is high (>60%) and momentum is strong, expand target_rr (e.g. from 2.0 to 2.5-3.0) to maximize trending runners.\n"
-        "3. Keep parameters within realistic professional ranges:\n"
-        "   - min_displacement_atr: between 1.0 and 2.0\n"
-        "   - target_rr: between 1.5 and 3.5\n"
+        "1. If frequent Stop-Loss hits occur due to false sweeps or choppy fakeouts, increase min_displacement_atr (1.0 to 2.5) and min_confidence_score (60 to 90).\n"
+        "2. If win rate is high (>60%) and momentum is strong, expand min_risk_reward / target_rr (1.5 to 4.0) to maximize trending runners.\n"
+        "3. Strictly enforce institutional bounds:\n"
+        "   - min_displacement_atr: between 1.0 and 2.5\n"
+        "   - min_risk_reward: between 1.5 and 4.0\n"
+        "   - min_confidence_score: between 60 and 90\n"
         "   - min_sweep_atr: between 0.08 and 0.25\n"
         "   - max_setup_age: between 8 and 18\n\n"
         "Respond ONLY with a JSON object:\n"
         "{\n"
         '  "min_displacement_atr": float,\n'
+        '  "min_risk_reward": float,\n'
         '  "target_rr": float,\n'
+        '  "min_confidence_score": int,\n'
         '  "min_sweep_atr": float,\n'
         '  "max_setup_age": int,\n'
         '  "tuning_rationale": "Clear institutional rationale for parameter update"\n'
@@ -141,11 +183,12 @@ def run_adaptive_self_tuning(
         f"Total Trades: {total_trades} | Wins: {len(wins)} | Losses: {len(losses)} | "
         f"Win Rate: {win_rate:.1f}% | Stop Hits: {len(stop_hits)} | Breakeven Exits: {len(be_hits)}\n"
         f"Current Config -> Disp ATR: {current_config.get('min_displacement_atr')} | "
-        f"Target RR: {current_config.get('target_rr')} | Sweep ATR: {current_config.get('min_sweep_atr')}"
+        f"Target RR: {current_config.get('target_rr')} | Min Confidence: {current_config.get('min_confidence_score', 75)} | Sweep ATR: {current_config.get('min_sweep_atr')}"
     )
 
     new_disp = current_config.get("min_displacement_atr", 1.2)
-    new_rr = current_config.get("target_rr", 2.0)
+    new_rr = current_config.get("min_risk_reward", current_config.get("target_rr", 2.0))
+    new_conf = current_config.get("min_confidence_score", 75)
     new_sweep = current_config.get("min_sweep_atr", 0.10)
     new_age = current_config.get("max_setup_age", 12)
     rationale = "Algorithmic feedback loop verified."
@@ -168,9 +211,10 @@ def run_adaptive_self_tuning(
             resp = requests.post(url, headers=headers, json=payload, timeout=12)
             if resp.status_code == 200:
                 parsed = json.loads(resp.json()["choices"][0]["message"]["content"])
-                new_disp = round(float(parsed.get("min_displacement_atr", new_disp)), 2)
-                new_rr = round(float(parsed.get("target_rr", new_rr)), 2)
-                new_sweep = round(float(parsed.get("min_sweep_atr", new_sweep)), 2)
+                new_disp = float(parsed.get("min_displacement_atr", new_disp))
+                new_rr = float(parsed.get("min_risk_reward", parsed.get("target_rr", new_rr)))
+                new_conf = int(parsed.get("min_confidence_score", new_conf))
+                new_sweep = float(parsed.get("min_sweep_atr", new_sweep))
                 new_age = int(parsed.get("max_setup_age", new_age))
                 rationale = str(parsed.get("tuning_rationale", rationale))
                 log.info("Groq AI Post-Mortem Tuning response: %s", rationale)
@@ -180,20 +224,26 @@ def run_adaptive_self_tuning(
     # Statistical rule-based fallback if Groq call failed or returned unchanged
     if not groq_api_key or rationale == "Algorithmic feedback loop verified.":
         if win_rate < 40.0 and len(losses) >= 2:
-            new_disp = min(1.6, round(new_disp + 0.15, 2))
-            new_sweep = min(0.20, round(new_sweep + 0.03, 2))
-            rationale = f"Tightened displacement filter to {new_disp}x ATR to eliminate choppy sweep false-breakouts (Win Rate: {win_rate:.1f}%)."
+            new_disp = round(new_disp + 0.15, 2)
+            new_conf = min(85, new_conf + 5)
+            new_sweep = round(new_sweep + 0.03, 2)
+            rationale = f"Tightened displacement filter ({new_disp}x ATR) and raised confidence filter ({new_conf}) to eliminate choppy sweep false-breakouts (Win Rate: {win_rate:.1f}%)."
         elif win_rate >= 65.0 and len(wins) >= 3:
-            new_rr = min(3.0, round(new_rr + 0.25, 2))
+            new_rr = round(new_rr + 0.25, 2)
             rationale = f"High win rate ({win_rate:.1f}%); expanded target RR to {new_rr}R to capture deeper institutional liquidity runs."
 
     old_disp = current_config.get("min_displacement_atr")
     old_rr = current_config.get("target_rr")
+    old_conf = current_config.get("min_confidence_score", 75)
 
-    current_config["min_displacement_atr"] = max(1.0, min(2.0, new_disp))
-    current_config["target_rr"] = max(1.5, min(3.5, new_rr))
-    current_config["min_sweep_atr"] = max(0.08, min(0.25, new_sweep))
-    current_config["max_setup_age"] = max(8, min(18, new_age))
+    # Apply strict hard clamping bounds
+    current_config["min_displacement_atr"] = round(clamp_parameter("min_displacement_atr", new_disp, 1.2), 2)
+    rr_clamped = round(clamp_parameter("min_risk_reward", new_rr, 2.0), 2)
+    current_config["target_rr"] = rr_clamped
+    current_config["min_risk_reward"] = rr_clamped
+    current_config["min_confidence_score"] = int(round(clamp_parameter("min_confidence_score", new_conf, 75)))
+    current_config["min_sweep_atr"] = round(clamp_parameter("min_sweep_atr", new_sweep, 0.10), 2)
+    current_config["max_setup_age"] = int(round(clamp_parameter("max_setup_age", new_age, 12)))
     current_config["last_tuned_at"] = ts_now
     current_config["tuning_rationale"] = rationale
     current_config["total_tunings"] = int(current_config.get("total_tunings", 0)) + 1
@@ -204,6 +254,8 @@ def run_adaptive_self_tuning(
         "new_disp": current_config["min_displacement_atr"],
         "old_rr": old_rr,
         "new_rr": current_config["target_rr"],
+        "old_conf": old_conf,
+        "new_conf": current_config["min_confidence_score"],
         "win_rate": round(win_rate, 1),
         "total_trades": total_trades,
         "rationale": rationale,

@@ -85,21 +85,50 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         with self._lock:
-            self.active_connections.append(websocket)
+            if websocket not in self.active_connections:
+                self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
         with self._lock:
-            if websocket in self.active_connections:
-                self.active_connections.remove(websocket)
+            try:
+                if websocket in self.active_connections:
+                    self.active_connections.remove(websocket)
+            except Exception:
+                pass
+
+    def prune_dead_connections(self) -> int:
+        """Removes any stale, disconnected, or dead WebSocket connections from the active pool."""
+        with self._lock:
+            alive: List[WebSocket] = []
+            for ws in self.active_connections:
+                try:
+                    state = getattr(ws, "client_state", None)
+                    if state is not None and getattr(state, "name", "") == "DISCONNECTED":
+                        continue
+                    alive.append(ws)
+                except Exception:
+                    continue
+            pruned = len(self.active_connections) - len(alive)
+            self.active_connections = alive
+            return pruned
 
     async def broadcast(self, message: dict):
         with self._lock:
             conns = list(self.active_connections)
+        dead: List[WebSocket] = []
         for connection in conns:
             try:
                 await connection.send_json(message)
             except Exception:
-                self.disconnect(connection)
+                dead.append(connection)
+        if dead:
+            with self._lock:
+                for d in dead:
+                    try:
+                        if d in self.active_connections:
+                            self.active_connections.remove(d)
+                    except Exception:
+                        pass
 
 
 manager = ConnectionManager()
@@ -443,9 +472,11 @@ async def websocket_terminal(websocket: WebSocket):
                     })
             except Exception:
                 pass
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception:
+    except (WebSocketDisconnect, ConnectionResetError):
+        pass
+    except Exception as exc:
+        log.debug("WebSocket client disconnected: %s", exc)
+    finally:
         manager.disconnect(websocket)
 
 
