@@ -179,7 +179,13 @@ class PaperBroker:
     def get_closed_positions(self) -> List[Dict[str, Any]]:
         with _LOCK:
             self._reload()
-            return list(self.state.get("closed", []))
+            res = []
+            for p in self.state.get("closed", []):
+                tid = p.get("trade_id") or p.get("id") or f"closed_{int(time.time())}"
+                p.setdefault("id", tid)
+                p.setdefault("trade_id", tid)
+                res.append(p)
+            return res
 
     def get_all_historical_closed_positions(self) -> List[Dict[str, Any]]:
         """Returns all historical closed positions combined with active state."""
@@ -191,10 +197,15 @@ class PaperBroker:
                     with open(self.history_filepath, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         if isinstance(data, list):
-                            history = data
+                            for p in data:
+                                tid = p.get("trade_id") or p.get("id") or f"hist_{int(time.time())}"
+                                p.setdefault("id", tid)
+                                p.setdefault("trade_id", tid)
+                                history.append(p)
                 except Exception:
                     pass
-            return history + list(self.state.get("closed", []))
+            active_closed = self.get_closed_positions()
+            return history + active_closed
 
     def register_pending_setup(
         self,

@@ -377,7 +377,10 @@ def manual_close_trade(trade_id: str) -> Dict[str, Any]:
     closed_event = PAPER_BROKER.close_position_early(trade_id, cur_price, reason="MANUAL_UI_EARLY_CLOSE")
     if not closed_event:
         raise HTTPException(status_code=400, detail="Could not close position early")
-    DELTA_BROKER.cancel_all_orders_for_symbol(sym)
+    if hasattr(DELTA_BROKER, "close_position_on_exchange"):
+        DELTA_BROKER.close_position_on_exchange(sym)
+    else:
+        DELTA_BROKER.cancel_all_orders_for_symbol(sym)
     if telegram_configured():
         send_telegram(
             f"🛑 *Position Closed Early via Web Dashboard*\n\n"
@@ -446,12 +449,28 @@ async def websocket_terminal(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+# In-memory mtime-based template cache to prevent repeated disk I/O on dashboard requests
+_INDEX_HTML_CACHE: Dict[str, Any] = {"mtime": 0.0, "content": ""}
+
+
+def _get_cached_index_html(tmpl_path: Path) -> str:
+    """Reads index.html with mtime caching for zero-disk-I/O overhead while supporting hot reload."""
+    try:
+        mtime = tmpl_path.stat().st_mtime
+        if mtime != _INDEX_HTML_CACHE["mtime"] or not _INDEX_HTML_CACHE["content"]:
+            _INDEX_HTML_CACHE["content"] = tmpl_path.read_text(encoding="utf-8")
+            _INDEX_HTML_CACHE["mtime"] = mtime
+        return _INDEX_HTML_CACHE["content"]
+    except Exception:
+        return tmpl_path.read_text(encoding="utf-8")
+
+
 @app.get("/", response_class=HTMLResponse)
 def index_dashboard() -> Any:
     """Institutional Dark Theme Dashboard for Web Browsers."""
     tmpl_path = Path(__file__).resolve().parent / "templates" / "index.html"
     if tmpl_path.exists():
-        return HTMLResponse(content=tmpl_path.read_text(encoding="utf-8"))
+        return HTMLResponse(content=_get_cached_index_html(tmpl_path))
 
     status_str = "🟢 ACTIVE" if SCANNING_ACTIVE.is_set() else "🛑 PAUSED"
     status_badge_class = "badge-active" if SCANNING_ACTIVE.is_set() else "badge-paused"

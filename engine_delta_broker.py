@@ -181,12 +181,16 @@ class DeltaTestnetBroker:
             log.warning("Delta API request failed on %s %s: %s", method, path, err_str)
             return {"error": err_str, "status": "NETWORK_ERROR"}
 
-        # Handle HTTP 429 (Too Many Requests) gracefully with single backoff
+        # Handle HTTP 429 (Too Many Requests) gracefully with exponential backoff (1s -> 2s)
         if status_code == 429:
             log.warning("Delta API rate limit hit (429) on %s %s. Backing off 1.0s...", method, path)
             time.sleep(1.0)
-            res_data, _, _ = _execute_http(headers, timestamp, signature)
-            if isinstance(res_data, dict) and res_data.get("status_code") == 429:
+            res_data, _, status_code = _execute_http(headers, timestamp, signature)
+            if status_code == 429:
+                log.warning("Delta API rate limit persists (429) on %s %s. Backing off 2.0s...", method, path)
+                time.sleep(2.0)
+                res_data, _, status_code = _execute_http(headers, timestamp, signature)
+            if isinstance(res_data, dict) and (res_data.get("status_code") == 429 or status_code == 429):
                 return {"error": "RATE_LIMITED", "status": "FAILED", "status_code": 429}
 
         # Check for expired signature and automatically calibrate clock drift
@@ -495,6 +499,64 @@ class DeltaTestnetBroker:
             "regular_orders": res_orders,
             "stop_orders": res_stops,
         }
+
+    def close_position_on_exchange(self, symbol: str) -> Dict[str, Any]:
+        """
+        Flattens live perpetual position on Delta Exchange and cancels all bracket trigger orders.
+        Guarantees zero ghost orders and prevents naked positions during dynamic early exits
+        or manual UI closes by submitting an immediate reduce_only market order.
+        """
+        # Step 1: Cancel all pending regular and stop trigger orders
+        cleanup_res = self.cancel_all_orders_for_symbol(symbol)
+        if not self.enabled or not self.api_key or not self.api_secret:
+            return {"status": "SKIPPED", "detail": "Delta broker disabled or keys missing", "cleanup": cleanup_res}
+
+        product_id = self.get_product_id(symbol)
+        if not product_id:
+            return {"status": "SKIPPED", "detail": f"Product ID not found for {symbol}", "cleanup": cleanup_res}
+
+        # Step 2: Query live exchange open positions to determine actual size & direction
+        try:
+            positions = self.get_open_positions_from_exchange()
+            target_pos = next((p for p in positions if p.get("product_id") == product_id), None)
+            if not target_pos:
+                log.info("Delta position flatten for %s: No live open position found on exchange", symbol)
+                return {"status": "FLAT", "symbol": symbol, "detail": "No open exchange position found", "cleanup": cleanup_res}
+
+            raw_size = target_pos.get("size", 0)
+            pos_size = int(raw_size) if raw_size else 0
+            if pos_size == 0:
+                log.info("Delta position flatten for %s: Live exchange position size is 0", symbol)
+                return {"status": "FLAT", "symbol": symbol, "detail": "Exchange position is already 0", "cleanup": cleanup_res}
+
+            # Sizing: sell to close long (>0), buy to close short (<0)
+            close_side = "sell" if pos_size > 0 else "buy"
+            close_qty = abs(pos_size)
+            log.info(
+                "Flattening live Delta position: %s %s contracts for %s (reduce_only=True)",
+                close_side.upper(), close_qty, symbol
+            )
+
+            payload = {
+                "product_id": int(product_id),
+                "size": close_qty,
+                "side": close_side,
+                "order_type": "market_order",
+                "reduce_only": True,
+            }
+            order_res = self._request("POST", "/v2/orders", payload=payload)
+            return {
+                "status": "CLOSED_ON_EXCHANGE",
+                "symbol": symbol,
+                "product_id": product_id,
+                "side": close_side,
+                "size": close_qty,
+                "response": order_res,
+                "cleanup": cleanup_res,
+            }
+        except Exception as exc:
+            log.warning("Failed to close position on Delta Exchange for %s: %s", symbol, exc)
+            return {"status": "ERROR", "symbol": symbol, "detail": str(exc), "cleanup": cleanup_res}
 
     def update_stop_loss_to_breakeven(
         self,

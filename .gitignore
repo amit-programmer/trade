@@ -19,6 +19,7 @@ credentials.json
 # BOT RUNTIME DATA & LOGS
 # =============================================================================
 bot_state.json
+execution_mode.json
 heartbeat.json
 crash_dump.json
 paper_positions.json

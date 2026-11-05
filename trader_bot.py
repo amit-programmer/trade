@@ -184,6 +184,7 @@ LOG_EVERY_CYCLE = env_bool("LOG_EVERY_CYCLE", True) # true = append a row every 
 SHEET_QUEUE_MAX = 2000
 
 STATE_FILE = Path(env_str("STATE_FILE", str(BASE_DIR / "bot_state.json")))
+EXECUTION_MODE_FILE = Path(env_str("EXECUTION_MODE_FILE", str(BASE_DIR / "execution_mode.json")))
 LOG_FILE = Path(env_str("LOG_FILE", str(BASE_DIR / "trader_bot.log")))
 HEARTBEAT_FILE = Path(env_str("HEARTBEAT_FILE", str(BASE_DIR / "heartbeat.json")))
 CRASH_DUMP_FILE = Path(env_str("CRASH_DUMP_FILE", str(BASE_DIR / "crash_dump.json")))
@@ -2405,14 +2406,44 @@ def load_state() -> dict:
 
 
 def get_execution_mode() -> str:
-    """Returns the current execution mode: 'HUMAN' or 'AUTONOMOUS'."""
+    """
+    Returns the current execution mode: 'HUMAN' or 'AUTONOMOUS'.
+    Reads atomically from EXECUTION_MODE_FILE as single source of truth across decoupled processes,
+    with safe fallback to bot_state.json and environment variable.
+    """
+    try:
+        if EXECUTION_MODE_FILE.exists():
+            content = EXECUTION_MODE_FILE.read_text(encoding="utf-8").strip()
+            if content.startswith("{"):
+                d = json.loads(content)
+                val = d.get("execution_mode", "")
+                if val:
+                    return "AUTONOMOUS" if "AUTO" in val.upper() else "HUMAN"
+            elif content:
+                return "AUTONOMOUS" if "AUTO" in content.upper() else "HUMAN"
+    except Exception:
+        pass
     st = load_state()
     return st.get("execution_mode", "HUMAN").upper()
 
 
 def set_execution_mode(mode: str) -> str:
-    """Updates and persists the system execution mode ('HUMAN' or 'AUTONOMOUS')."""
+    """
+    Updates and persists the system execution mode ('HUMAN' or 'AUTONOMOUS') atomically.
+    Persists to dedicated EXECUTION_MODE_FILE with atomic rename so decoupled processes
+    (server.py and trader_bot.py) stay 100% synchronized without race condition clobbering.
+    """
     norm = "AUTONOMOUS" if "AUTO" in (mode or "").upper() else "HUMAN"
+    try:
+        tmp_mode = EXECUTION_MODE_FILE.with_suffix(".tmp")
+        tmp_mode.write_text(
+            json.dumps({"execution_mode": norm, "updated_at": datetime.now(timezone.utc).isoformat()}),
+            encoding="utf-8",
+        )
+        os.replace(tmp_mode, EXECUTION_MODE_FILE)
+    except Exception as m_exc:
+        log.warning("Could not persist execution_mode.json: %s", m_exc)
+
     st = load_state()
     st["execution_mode"] = norm
     save_state(st)
@@ -2422,6 +2453,8 @@ def set_execution_mode(mode: str) -> str:
 
 def save_state(state: dict) -> None:
     try:
+        # Re-sync execution_mode from dedicated single source of truth to avoid overwriting toggles from decoupled processes
+        state["execution_mode"] = get_execution_mode()
         tmp = STATE_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(state), encoding="utf-8")
         os.replace(tmp, STATE_FILE)
@@ -4937,7 +4970,10 @@ def evaluate_autonomous_dynamic_exit(pos: Dict[str, Any], client: BinanceClient,
             log.warning("🚨 Autonomous Dynamic Exit triggered on %s: %s", sym, mss_reason)
             closed_event = PAPER_BROKER.close_position_early(trade_id, cur_price, reason=f"AI MSS Panic Exit: {mss_reason}")
             if closed_event:
-                DELTA_BROKER.cancel_all_orders_for_symbol(sym)
+                if hasattr(DELTA_BROKER, "close_position_on_exchange"):
+                    DELTA_BROKER.close_position_on_exchange(sym)
+                else:
+                    DELTA_BROKER.cancel_all_orders_for_symbol(sym)
                 send_telegram(
                     f"🚨 *AI AUTONOMOUS DYNAMIC EXIT (CAPITAL SHIELD)*\n\n"
                     f"• Symbol: *{sym} ({direction})*\n"

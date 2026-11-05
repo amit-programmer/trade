@@ -110,9 +110,10 @@ def test_server_control_endpoints(mock_tg):
 
 @patch("server.send_telegram", return_value=True)
 @patch.object(server._client, "price", return_value=65200.0)
+@patch("server.DELTA_BROKER.close_position_on_exchange", return_value={"status": "CLOSED_ON_EXCHANGE"})
 @patch("server.DELTA_BROKER.cancel_all_orders_for_symbol", return_value={"status": "CLEANED"})
 @patch.object(PAPER_BROKER, "can_open_new_trade", return_value=(True, "OK"))
-def test_manual_close_early_endpoint(mock_can_open, mock_delta_cancel, mock_price, mock_tg):
+def test_manual_close_early_endpoint(mock_can_open, mock_delta_cancel, mock_delta_close, mock_price, mock_tg):
     """Verify 1-click manual early position closure endpoint."""
     tid = f"TEST_MANUAL_{int(time.time())}"
     PAPER_BROKER.register_pending_setup(
@@ -138,9 +139,10 @@ def test_manual_close_early_endpoint(mock_can_open, mock_delta_cancel, mock_pric
 
 
 @patch("trader_bot.send_telegram", return_value=True)
+@patch("trader_bot.DELTA_BROKER.close_position_on_exchange", return_value={"status": "CLOSED_ON_EXCHANGE"})
 @patch("trader_bot.DELTA_BROKER.cancel_all_orders_for_symbol", return_value={"status": "CLEANED"})
 @patch.object(PAPER_BROKER, "can_open_new_trade", return_value=(True, "OK"))
-def test_autonomous_dynamic_exit_mss(mock_can_open, mock_delta_cancel, mock_tg):
+def test_autonomous_dynamic_exit_mss(mock_can_open, mock_delta_cancel, mock_delta_close, mock_tg):
     """Verify AI dynamic exit triggers early exit on opposing MSS."""
     tid = f"TEST_MSS_{int(time.time())}"
     PAPER_BROKER.register_pending_setup(
@@ -189,6 +191,55 @@ def test_sheet_headers_specification():
     assert "Daily_Summary" in SHEET_HEADERS
 
 
+def test_cross_process_state_synchronization():
+    """Verify that mode toggled externally is NOT overwritten when bot loop calls save_state."""
+    # Step 1: Set mode to AUTONOMOUS
+    set_execution_mode("AUTONOMOUS")
+    assert get_execution_mode() == "AUTONOMOUS"
+
+    # Step 2: Simulate trader_bot.py having an older in-memory state dict with "HUMAN"
+    stale_state = load_state()
+    stale_state["execution_mode"] = "HUMAN"
+    # Calling save_state should refresh execution_mode from the single source of truth
+    save_state(stale_state)
+
+    # Step 3: Verify execution_mode remained AUTONOMOUS
+    assert get_execution_mode() == "AUTONOMOUS"
+
+    # Reset
+    set_execution_mode("HUMAN")
+    assert get_execution_mode() == "HUMAN"
+
+
+def test_delta_close_position_on_exchange():
+    """Verify Delta Exchange flatten mechanism submits reduce_only market orders."""
+    from engine_delta_broker import DELTA_BROKER
+    with patch.object(DELTA_BROKER, "enabled", True), \
+         patch.object(DELTA_BROKER, "api_key", "test_key"), \
+         patch.object(DELTA_BROKER, "api_secret", "test_secret"), \
+         patch.object(DELTA_BROKER, "cancel_all_orders_for_symbol", return_value={"status": "CLEANED"}), \
+         patch.object(DELTA_BROKER, "get_product_id", return_value=27), \
+         patch.object(DELTA_BROKER, "get_open_positions_from_exchange", return_value=[{"product_id": 27, "size": 5}]), \
+         patch.object(DELTA_BROKER, "_request", return_value={"success": True}) as mock_req:
+
+        res = DELTA_BROKER.close_position_on_exchange("BTCUSDT")
+        assert res["status"] == "CLOSED_ON_EXCHANGE"
+        assert res["side"] == "sell"
+        assert res["size"] == 5
+        # Verify reduce_only was set in payload
+        call_args = mock_req.call_args
+        assert call_args[1]["payload"]["reduce_only"] is True
+
+
+def test_closed_positions_normalization():
+    """Verify get_closed_positions returns dicts with both id and trade_id."""
+    closed = PAPER_BROKER.get_closed_positions()
+    for p in closed:
+        assert "id" in p
+        assert "trade_id" in p
+        assert p["id"] == p["trade_id"]
+
+
 if __name__ == "__main__":
     print("Running test_dual_mode_toggle_state()...")
     test_dual_mode_toggle_state()
@@ -213,5 +264,17 @@ if __name__ == "__main__":
     print("Running test_sheet_headers_specification()...")
     test_sheet_headers_specification()
     print("PASS: test_sheet_headers_specification")
+
+    print("Running test_cross_process_state_synchronization()...")
+    test_cross_process_state_synchronization()
+    print("PASS: test_cross_process_state_synchronization")
+
+    print("Running test_delta_close_position_on_exchange()...")
+    test_delta_close_position_on_exchange()
+    print("PASS: test_delta_close_position_on_exchange")
+
+    print("Running test_closed_positions_normalization()...")
+    test_closed_positions_normalization()
+    print("PASS: test_closed_positions_normalization")
 
     print("\nALL DUAL-MODE & AUTONOMOUS TESTS PASSED SUCCESSFULLY!")
