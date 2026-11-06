@@ -76,6 +76,7 @@ class RiskBudgetManager:
         symbol: str = "",
         current_open_count: Optional[int] = None,
         today_realized_loss: Optional[float] = None,
+        risk_multiplier: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Calculates position size based on dollar risk budget.
@@ -106,8 +107,9 @@ class RiskBudgetManager:
         if risk_per_unit <= 0:
             return {"status": "BLOCK", "reason": "Invalid Stop Loss (equal to Entry)"}
 
-        # Size = Risk Amount / Risk Per Share or Coin
-        quantity = self.max_loss_usd / risk_per_unit
+        # Size = Risk Amount / Risk Per Share or Coin (with optional institutional weekend/volatility risk multiplier)
+        effective_loss_usd = round(self.max_loss_usd * max(0.1, min(1.0, float(risk_multiplier))), 2)
+        quantity = effective_loss_usd / risk_per_unit
         total_trade_capital = quantity * entry
         risk_reward_ratio = round(reward_per_unit / risk_per_unit, 2)
 
@@ -144,7 +146,8 @@ class RiskBudgetManager:
             "quantity": qty_rounded,
             "quantity_str": f"{qty_rounded:g}",
             "capital_required_usd": round(total_trade_capital, 2),
-            "max_loss_usd": self.max_loss_usd,
+            "max_loss_usd": effective_loss_usd,
+            "risk_multiplier": float(risk_multiplier),
             "risk_per_unit": round(risk_per_unit, 4),
             "reward_per_unit": round(reward_per_unit, 4),
             "risk_reward_ratio": f"1:{risk_reward_ratio}",

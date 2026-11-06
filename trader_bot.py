@@ -91,6 +91,16 @@ from engine_adaptive_tuner import (
     apply_adaptive_config_to_strategy,
     run_adaptive_self_tuning,
 )
+from engine_institutional_guards import (
+    check_market_spread,
+    check_correlation_risk,
+    check_anti_tilt_lockout,
+    get_weekend_risk_multiplier,
+    calculate_fee_adjusted_breakeven,
+    check_stale_trade_ttl,
+    check_funding_rate_gate,
+    check_flash_crash_circuit_breaker,
+)
 
 
 # =============================================================================
@@ -2594,6 +2604,41 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
         state["alerted"][setup.key] = time.time()
         return None
 
+    # 0d. Institutional Shield: Anti-Tilt Lockout Guard (3 consecutive losses -> 4h cooldown)
+    closed_history = PAPER_BROKER.get_all_historical_closed_positions()
+    is_tilt_locked, tilt_msg, _ = check_anti_tilt_lockout(closed_history)
+    if is_tilt_locked:
+        log.warning("Setup %s %s blocked by Anti-Tilt Guard: %s", setup.symbol, setup.direction, tilt_msg)
+        state["alerted"][setup.key] = time.time()
+        return None
+
+    # 0e. Institutional Shield: Flash Crash / Cascade Liquidation Circuit Breaker
+    cb_tripped, cb_msg = check_flash_crash_circuit_breaker(client=client)
+    if cb_tripped:
+        log.warning("Setup %s %s blocked by Circuit Breaker: %s", setup.symbol, setup.direction, cb_msg)
+        return None
+
+    # 0f. Institutional Shield: Pair Correlation & Synthetic Over-Leverage Guard
+    corr_ok, corr_msg = check_correlation_risk(setup.symbol, setup.direction, PAPER_BROKER.get_open_positions())
+    if not corr_ok:
+        log.warning("Setup %s %s blocked by Correlation Guard: %s", setup.symbol, setup.direction, corr_msg)
+        state["alerted"][setup.key] = time.time()
+        return None
+
+    # 0g. Institutional Shield: Real-Time Bid-Ask Spread Guard (< 0.08% allowable)
+    spread_ok, spread_msg, _ = check_market_spread(setup.symbol, client=client, max_spread_pct=0.08)
+    if not spread_ok:
+        log.warning("Setup %s %s blocked by Spread Guard: %s", setup.symbol, setup.direction, spread_msg)
+        state["alerted"][setup.key] = time.time()
+        return None
+
+    # 0h. Institutional Shield: Funding Rate Squeeze Gate
+    funding_ok, funding_msg, _ = check_funding_rate_gate(setup.symbol, setup.direction, client=client)
+    if not funding_ok:
+        log.warning("Setup %s %s blocked by Funding Rate Gate: %s", setup.symbol, setup.direction, funding_msg)
+        state["alerted"][setup.key] = time.time()
+        return None
+
     # 1. Run Time Machine (Monte Carlo Simulator - 10,000 runs)
     try:
         sim_results = run_monte_carlo_simulation(
@@ -2608,8 +2653,9 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
     except Exception as exc:
         log.warning("Time Machine Monte Carlo simulation failed: %s", exc)
 
-    # 2. Calculate Dynamic Risk & Budget Sizing
+    # 2. Calculate Dynamic Risk & Budget Sizing (with Weekend Risk Multiplier)
     try:
+        weekend_mult = get_weekend_risk_multiplier()
         risk_data = RISK_MGR.calculate_position(
             entry=setup.entry,
             stop_loss=setup.stop,
@@ -2617,6 +2663,7 @@ def handle_setup(setup: Setup, now: datetime, state: dict, df: Optional[pd.DataF
             symbol=setup.symbol,
             current_open_count=open_count,
             today_realized_loss=today_loss,
+            risk_multiplier=weekend_mult,
         )
         setup.risk_data = risk_data
     except Exception as exc:
@@ -2881,6 +2928,18 @@ def run_cycle(client: BinanceClient, sheets: Optional[SheetsLogger], state: dict
     # Day Trader Skill: Check open paper positions against latest prices
     if prices:
         try:
+            # Institutional Stale Trade TTL Guard (capital recycling for trades in chop > 4h with < 0.5R)
+            for tid, pos in list(PAPER_BROKER.get_open_positions().items()):
+                sym = pos.get("symbol")
+                cur_p = prices.get(sym)
+                if cur_p and cur_p > 0:
+                    is_stale, stale_reason = check_stale_trade_ttl(pos, cur_p)
+                    if is_stale:
+                        log.info("Stale Trade TTL Triggered on %s: %s", tid, stale_reason)
+                        early_ev = PAPER_BROKER.close_position_early(tid, cur_p, reason=stale_reason)
+                        if early_ev:
+                            send_telegram(early_ev["message"], parse_mode="Markdown")
+
             paper_events = PAPER_BROKER.update_positions(prices)
             for pe in paper_events:
                 send_telegram(pe["message"], parse_mode="Markdown")

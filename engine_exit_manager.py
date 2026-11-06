@@ -11,6 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+try:
+    from engine_institutional_guards import calculate_fee_adjusted_breakeven
+except ImportError:
+    def calculate_fee_adjusted_breakeven(entry: float, direction: str, fee_buffer_pct: float = 0.0012) -> float:
+        is_long = str(direction).upper() in ("LONG", "BUY")
+        return round(entry * (1.0 + fee_buffer_pct if is_long else 1.0 - fee_buffer_pct), 4)
+
 
 def generate_exit_plan(
     entry: float,
@@ -43,11 +50,13 @@ def generate_exit_plan(
         tp2 = min(target, tp2_ref) if (target > 0 and target < entry) else tp2_ref
         tp3 = entry - 3.5 * risk_r
 
+    be_price = calculate_fee_adjusted_breakeven(entry, direction)
+
     return {
         "entry": entry,
         "stop_loss": stop_loss,
         "breakeven_trigger": "TP1_HIT",
-        "breakeven_price": entry,
+        "breakeven_price": be_price,
         "tp1": {
             "price": round(tp1, 6),
             "allocation_pct": 50,
@@ -131,12 +140,13 @@ def check_trade_stage(
     # 4. TP1 Check (triggers Breakeven move)
     if stage == "OPEN" and tp1 > 0:
         if (is_long and current_price >= tp1) or ((not is_long) and current_price <= tp1):
+            be_price = calculate_fee_adjusted_breakeven(entry, direction)
             return {
                 "event": "TP1_HIT",
                 "exit_price": current_price,
-                "new_stop_loss": entry,
+                "new_stop_loss": be_price,
                 "realized_r": 1.5,
-                "description": "TP1 Hit (50% booked) - Stop Loss moved to Breakeven",
+                "description": f"TP1 Hit (50% booked) - Stop Loss moved to Fee-Adjusted Breakeven (${be_price:,.4f})",
             }
 
     # 5. Stale Trade Rule (4-hour chop without reaching 0.5R)

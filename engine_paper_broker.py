@@ -503,7 +503,8 @@ class PaperBroker:
                     pos["booked_pnl_usd"] = round(pos.get("booked_pnl_usd", 0.0) + pnl_step, 2)
                     pos["booked_r"] = round(pos.get("booked_r", 0.0) + 0.75, 2)  # 50% * 1.5R
                     pos["remaining_qty"] = round(total_qty * 0.5, 4)
-                    pos["stop_loss"] = entry  # Moved to Breakeven
+                    new_be = float(check.get("new_stop_loss", entry))
+                    pos["stop_loss"] = new_be  # Moved to Fee-Adjusted Breakeven
                     pos["stage"] = "TP1_HIT"
                     events.append({
                         "type": "TP1_HIT",
@@ -511,7 +512,7 @@ class PaperBroker:
                         "symbol": sym,
                         "direction": pos["direction"],
                         "exit_price": price,
-                        "new_stop": entry,
+                        "new_stop": new_be,
                         "remaining_qty": pos["remaining_qty"],
                         "booked_pnl_usd": pos["booked_pnl_usd"],
                         "trade_data": dict(pos),
@@ -519,7 +520,7 @@ class PaperBroker:
                             f"🎯 *PAPER TRADE TP1 HIT: {sym} ({pos['direction']})*\n"
                             f"• Price: `${price:,.4f}`\n"
                             f"• 50% Locked: `+${pnl_step:,.2f}` (+1.5R)\n"
-                            f"• 🛡️ *Stop-Loss moved to Breakeven:* `${entry:,.4f}` (Risk Free Trade!)"
+                            f"• 🛡️ *Stop-Loss moved to Fee-Adjusted Breakeven:* `${new_be:,.4f}` (Net Profit Guaranteed!)"
                         ),
                     })
 
