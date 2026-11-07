@@ -76,6 +76,7 @@ def main():
 
     py_exe = sys.executable
     processes = []
+    child_env = dict(os.environ, PYTHONUNBUFFERED="1")
 
     # Start 1: FastAPI Dashboard Server
     server_cmd = [py_exe, str(SERVER_SCRIPT)]
@@ -85,6 +86,7 @@ def main():
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=child_env,
     )
     processes.append(("SERVER", p_server))
 
@@ -106,6 +108,7 @@ def main():
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=child_env,
     )
     processes.append(("BOT", p_bot))
 
