@@ -31,8 +31,13 @@ RED = "\033[91m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
 
-# Windows cmd/powershell ANSI color support
+# Windows cmd/powershell ANSI color and UTF-8 encoding support
 if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     os.system("")
 
 stop_requested = threading.Event()
@@ -76,7 +81,11 @@ def main():
 
     py_exe = sys.executable
     processes = []
-    child_env = dict(os.environ, PYTHONUNBUFFERED="1")
+    child_env = dict(
+        os.environ,
+        PYTHONUNBUFFERED="1",
+        PYTHONIOENCODING="utf-8",
+    )
 
     # Start 1: FastAPI Dashboard Server
     server_cmd = [py_exe, str(SERVER_SCRIPT)]
@@ -85,6 +94,8 @@ def main():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         env=child_env,
     )
@@ -107,6 +118,8 @@ def main():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         env=child_env,
     )

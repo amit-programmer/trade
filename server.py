@@ -20,6 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Windows console UTF-8 resilience
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
@@ -905,26 +913,26 @@ if __name__ == "__main__":
 
         if already_running:
             print("\n" + "=" * 65)
-            print("ℹ️ trader_bot.py is ALREADY active in another process. Reusing existing instance.")
+            print("[INFO] trader_bot.py is ALREADY active in another process. Reusing existing instance.")
             print("=" * 65 + "\n")
         else:
             print("\n" + "=" * 65)
-            print("🤖 [ALL-IN-ONE MODE] Starting trader_bot.py alongside server...")
+            print("[ALL-IN-ONE MODE] Starting trader_bot.py alongside server...")
             print("=" * 65 + "\n")
             bot_process = subprocess.Popen([sys.executable, str(bot_script)])
 
     try:
-        print(f"🚀 Dashboard Server starting on http://localhost:{args.port}/ (Network: http://{args.host}:{args.port}/)")
+        print(f"[SERVER] Dashboard Server starting on http://localhost:{args.port}/ (Network: http://{args.host}:{args.port}/)")
         if not should_run_bot:
-            print("💡 Tip: Dono (Server + Trading Bot) ek sath run karne ke liye use karein:")
+            print("[TIP] Dono (Server + Trading Bot) ek sath run karne ke liye use karein:")
             print("   python server.py --all   ya   python run_all.py\n")
         uvicorn.run("server:app", host=args.host, port=args.port, reload=args.reload)
     finally:
         if bot_process is not None and bot_process.poll() is None:
-            print("\n🛑 Stopping background trader_bot.py daemon...")
+            print("\n[STOP] Stopping background trader_bot.py daemon...")
             try:
                 bot_process.terminate()
                 bot_process.wait(timeout=5)
             except Exception:
                 bot_process.kill()
-            print("✅ trader_bot.py stopped cleanly.")
+            print("[OK] trader_bot.py stopped cleanly.")

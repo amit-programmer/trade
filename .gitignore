@@ -25,6 +25,8 @@ crash_dump.json
 paper_positions.json
 paper_positions_history.json
 adaptive_config.json
+.trader_bot.pid
+*.pid
 *.log*
 trader_bot.log
 *.tmp
