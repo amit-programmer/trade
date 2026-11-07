@@ -432,17 +432,25 @@ copy .env.example .env
 # 5. Connection test run karein
 python trader_bot.py --test
 
-# 6. Bot run karein (24/7 Production Mode)
+# 6. Dono Services Ek Sath Run Karein (Recommended All-in-One):
+python run_all.py
+# Ya fir:
+python server.py --all
+# Windows par direct double-click karein:
+start.bat
+
+# 7. Ya Alag-Alag Terminals me run karein:
+# Terminal 1 (FastAPI Web Dashboard on Port 8000):
+python server.py
+# Terminal 2 (24/7 SMC Scanner & Trading Engine):
 python trader_bot.py
 
-# Ya single cycle scan ke liye:
+# 8. Single cycle test scan:
 python trader_bot.py --once
 
-# 7. Standalone Health Watchdog Check (Docker / Systemd)
+# 9. Standalone Health Watchdog Check (Docker / Systemd):
 python trader_bot.py --health
 
-# 8. FastAPI Web Dashboard & Institutional Terminal (Port 8000)
-python -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
 ---

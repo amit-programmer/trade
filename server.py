@@ -13,14 +13,25 @@ import json
 import logging
 import threading
 import collections
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+try:
+    from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import HTMLResponse, JSONResponse
+except ImportError:
+    print("\n" + "=" * 65)
+    print("❌ DEPENDENCY ERROR: 'fastapi' module nahi mila!")
+    print("Dashboard server run karne ke liye dependencies install karein:")
+    print("   pip install -r requirements.txt")
+    print("Ya direct FastAPI aur Uvicorn install karein:")
+    print("   pip install fastapi uvicorn")
+    print("=" * 65 + "\n")
+    sys.exit(1)
 
 from engine_paper_broker import PAPER_BROKER
 from engine_macro_filter import get_crypto_sentiment, check_macro_event_block
@@ -860,5 +871,40 @@ def index_dashboard() -> Any:
 
 
 if __name__ == "__main__":
+    import argparse
+    import subprocess
+    import sys
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
+    parser = argparse.ArgumentParser(description="FastAPI Web Dashboard & REST Server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host IP to bind to (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to (default: 8000)")
+    parser.add_argument("--with-bot", "--all", "-a", dest="with_bot", action="store_true", help="Start trader_bot.py in parallel alongside dashboard server")
+    parser.add_argument("--reload", action="store_true", default=False, help="Enable uvicorn reloader")
+    args, unknown = parser.parse_known_args()
+
+    bot_process: Optional[subprocess.Popen] = None
+    should_run_bot = args.with_bot or os.getenv("RUN_BOT_WITH_SERVER", "").strip().lower() in ("true", "1", "yes")
+
+    if should_run_bot:
+        bot_script = Path(__file__).resolve().parent / "trader_bot.py"
+        print("\n" + "=" * 65)
+        print("🤖 [ALL-IN-ONE MODE] Starting trader_bot.py alongside server...")
+        print("=" * 65 + "\n")
+        bot_process = subprocess.Popen([sys.executable, str(bot_script)])
+
+    try:
+        print(f"🚀 Dashboard Server starting on http://localhost:{args.port}/ (Network: http://{args.host}:{args.port}/)")
+        if not should_run_bot:
+            print("💡 Tip: Dono (Server + Trading Bot) ek sath run karne ke liye use karein:")
+            print("   python server.py --all   ya   python run_all.py\n")
+        uvicorn.run("server:app", host=args.host, port=args.port, reload=args.reload)
+    finally:
+        if bot_process is not None and bot_process.poll() is None:
+            print("\n🛑 Stopping background trader_bot.py daemon...")
+            try:
+                bot_process.terminate()
+                bot_process.wait(timeout=5)
+            except Exception:
+                bot_process.kill()
+            print("✅ trader_bot.py stopped cleanly.")

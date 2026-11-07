@@ -363,3 +363,4 @@ def reset_circuit_breaker() -> None:
     """Manually clears any active flash crash circuit breaker."""
     global _CIRCUIT_BREAKER_UNTIL
     _CIRCUIT_BREAKER_UNTIL = 0.0
+
