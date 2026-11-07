@@ -888,10 +888,29 @@ if __name__ == "__main__":
 
     if should_run_bot:
         bot_script = Path(__file__).resolve().parent / "trader_bot.py"
-        print("\n" + "=" * 65)
-        print("🤖 [ALL-IN-ONE MODE] Starting trader_bot.py alongside server...")
-        print("=" * 65 + "\n")
-        bot_process = subprocess.Popen([sys.executable, str(bot_script)])
+        bot_pid_file = Path(__file__).resolve().parent / ".trader_bot.pid"
+        already_running = False
+        if bot_pid_file.exists():
+            try:
+                pid = int(bot_pid_file.read_text(encoding="utf-8").strip())
+                if pid > 0:
+                    try:
+                        os.kill(pid, 0)
+                        already_running = True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if already_running:
+            print("\n" + "=" * 65)
+            print("ℹ️ trader_bot.py is ALREADY active in another process. Reusing existing instance.")
+            print("=" * 65 + "\n")
+        else:
+            print("\n" + "=" * 65)
+            print("🤖 [ALL-IN-ONE MODE] Starting trader_bot.py alongside server...")
+            print("=" * 65 + "\n")
+            bot_process = subprocess.Popen([sys.executable, str(bot_script)])
 
     try:
         print(f"🚀 Dashboard Server starting on http://localhost:{args.port}/ (Network: http://{args.host}:{args.port}/)")

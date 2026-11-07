@@ -13,3 +13,4 @@ if exist venv\Scripts\python.exe (
 
 %PYTHON_EXE% run_all.py
 pause
+

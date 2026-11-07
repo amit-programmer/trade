@@ -198,6 +198,76 @@ EXECUTION_MODE_FILE = Path(env_str("EXECUTION_MODE_FILE", str(BASE_DIR / "execut
 LOG_FILE = Path(env_str("LOG_FILE", str(BASE_DIR / "trader_bot.log")))
 HEARTBEAT_FILE = Path(env_str("HEARTBEAT_FILE", str(BASE_DIR / "heartbeat.json")))
 CRASH_DUMP_FILE = Path(env_str("CRASH_DUMP_FILE", str(BASE_DIR / "crash_dump.json")))
+BOT_PID_FILE = Path(env_str("BOT_PID_FILE", str(BASE_DIR / ".trader_bot.pid")))
+
+
+def acquire_bot_pid_lock(force_kill_stale: bool = True) -> bool:
+    """
+    Guarantees strict single-instance execution for trader_bot.
+    If another local trader_bot is detected, terminates it to prevent Telegram 409 Conflict.
+    """
+    my_pid = os.getpid()
+    if BOT_PID_FILE.exists():
+        try:
+            content = BOT_PID_FILE.read_text(encoding="utf-8").strip()
+            if content.isdigit():
+                old_pid = int(content)
+                if old_pid != my_pid and _is_pid_running(old_pid):
+                    if force_kill_stale:
+                        logging.getLogger("trader_bot").warning(
+                            "⚠️ Found stale trader_bot process (PID %d). Terminating to prevent Telegram 409 Conflict...",
+                            old_pid,
+                        )
+                        _kill_pid(old_pid)
+                        time.sleep(1.0)
+                    else:
+                        logging.getLogger("trader_bot").warning(
+                            "Another trader_bot process (PID %d) is already running.", old_pid
+                        )
+                        return False
+        except Exception:
+            pass
+
+    try:
+        BOT_PID_FILE.write_text(str(my_pid), encoding="utf-8")
+        import atexit
+        def _cleanup():
+            try:
+                if BOT_PID_FILE.exists() and BOT_PID_FILE.read_text(encoding="utf-8").strip() == str(my_pid):
+                    BOT_PID_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+        atexit.register(_cleanup)
+        return True
+    except Exception as exc:
+        logging.getLogger("trader_bot").warning("Could not write PID lock: %s", exc)
+        return True
+
+
+def _is_pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, PermissionError):
+        return sys.platform == "win32" and isinstance(sys.exc_info()[1], PermissionError)
+    except Exception:
+        return False
+
+
+def _kill_pid(pid: int) -> None:
+    try:
+        if sys.platform == "win32":
+            import subprocess
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        else:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.5)
+            if _is_pid_running(pid):
+                os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
 
 # Day boundaries / timestamps use this timezone (IANA name), default UTC.
 TZ_NAME = env_str("TIMEZONE", "UTC")
@@ -3698,6 +3768,12 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
     if not TELEGRAM_TOKEN:
         return
     offset = 0
+    # Clear any stale webhook to prevent 409 conflict
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook", json={"drop_pending_updates": False}, timeout=5)
+    except Exception:
+        pass
+
     try:
         r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"limit": 100}, timeout=10)
         data = r.json()
@@ -3713,6 +3789,7 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
 
     log.info("Telegram command listener active (listening for /ai, @ai, @tado, /charts, /scan, /status)...")
     recent_text_cache: collections.deque[tuple[str, str, float]] = collections.deque(maxlen=1000)
+    conflict_count = 0
 
     while not STOP.is_set():
         try:
@@ -3724,9 +3801,19 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
             }
             resp = requests.get(url, params=params, timeout=20)
             if resp.status_code == 409:
-                log.warning("⚠️ Telegram Conflict (409): Another process is polling Telegram with this bot token! Backing off 15s...")
-                STOP.wait(15)
+                conflict_count += 1
+                try:
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook", json={"drop_pending_updates": False}, timeout=5)
+                except Exception:
+                    pass
+                log.warning(
+                    "⚠️ Telegram Conflict (409): Another process is polling Telegram with this bot token! "
+                    "Make sure only ONE bot instance is running. (Run 'python stop_all.py' to terminate duplicate background processes). Backing off 10s..."
+                )
+                STOP.wait(10)
                 continue
+
+            conflict_count = 0
             if resp.status_code != 200:
                 STOP.wait(3)
                 continue
@@ -5196,6 +5283,10 @@ def main() -> int:
     setup_logging()
     if not validate_system_prerequisites():
         return 1
+
+    # Single-instance PID lock: terminate any stale background instance to prevent Telegram 409 Conflict
+    if not args.health and not args.test and not args.once:
+        acquire_bot_pid_lock(force_kill_stale=True)
 
     SHEETS_ON = sheets_enabled()
 
