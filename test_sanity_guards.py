@@ -136,9 +136,27 @@ def test_websocket_dead_client_cleanup():
     print("[OK] WebSocket Dead Client Cleanup Verified!", flush=True)
 
 
+def test_delta_broker_proxy_configuration():
+    """Verify Delta broker proxy initialization and credential masking."""
+    from engine_delta_broker import DeltaTestnetBroker
+    os.environ["DELTA_OUTBOUND_PROXY"] = "http://myuser:mypassword@proxy.example.com:9293"
+    try:
+        broker = DeltaTestnetBroker()
+        assert broker.proxy_url == "http://myuser:mypassword@proxy.example.com:9293"
+        assert broker.session.proxies.get("http") == "http://myuser:mypassword@proxy.example.com:9293"
+        masked = broker._mask_proxy(broker.proxy_url)
+        assert "mypassword" not in masked
+        assert "proxy.example.com:9293" in masked
+        print("  [Step OK] Delta Broker outbound proxy & credential masking verified!", flush=True)
+    finally:
+        os.environ.pop("DELTA_OUTBOUND_PROXY", None)
+
+
 if __name__ == "__main__":
     print("Running test_adaptive_tuner_hard_bounds_clamping()...", flush=True)
     test_adaptive_tuner_hard_bounds_clamping()
     print("Running test_websocket_dead_client_cleanup()...", flush=True)
     test_websocket_dead_client_cleanup()
+    print("Running test_delta_broker_proxy_configuration()...", flush=True)
+    test_delta_broker_proxy_configuration()
     print("\nALL SANITY GUARDS VERIFIED SUCCESSFULLY (100% OK)!", flush=True)

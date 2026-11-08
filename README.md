@@ -314,6 +314,19 @@ Bot ke paas group/channel administration ke sabhi 7 standard permissions configu
 | `DELTA_BASE_URL` | No | `https://testnet-api.delta.exchange` | Delta REST API endpoint (Testnet or Live) |
 | `DELTA_API_KEY` | Optional | - | Delta Exchange API Key |
 | `DELTA_API_SECRET` | Optional | - | Delta Exchange API Secret |
+| `DELTA_OUTBOUND_PROXY` | Optional | - | Static outbound proxy URL (Solves Delta IP whitelisting 403 on cloud hosts) |
+
+---
+
+### 🌐 Delta Exchange IP Whitelisting & Egress Solutions
+
+Delta Exchange API security ke liye IP whitelisting use karta hai. Dynamic cloud hosts (Railway, Render) ya home broadband par egress IP change hone se `403 / ip_not_whitelisted` error se bachne ke 3 solutions:
+1. **Option 1 (Static Egress Proxy for Cloud):** QuotaGuard / Fixie jaise proxy se static IP lein, Delta me whitelist karein aur `.env` me configure karein:
+   ```env
+   DELTA_OUTBOUND_PROXY=http://username:password@proxy-server:9293
+   ```
+2. **Option 2 (Linux VPS with Dedicated IPv4):** DigitalOcean, Hetzner ya AWS VPS par permanent public IP milti hai — us IP ko ek hi baar Delta API settings me whitelist kar dein.
+3. **Option 3 (Testnet Unrestricted Key):** Delta Testnet par API Key generate karte waqt **IP Whitelist field blank / empty** chhod dein taaki kisi bhi IP se orders bina restriction place ho sakein.
 
 ---
 

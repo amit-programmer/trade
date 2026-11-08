@@ -92,6 +92,28 @@ class DeltaTestnetBroker:
             "Content-Type": "application/json",
         })
 
+        # Static Outbound Proxy support (Solves IP whitelisting on cloud platforms like Railway/Render/dynamic IPs)
+        self.proxy_url = os.getenv("DELTA_OUTBOUND_PROXY", os.getenv("DELTA_PROXY", "")).strip()
+        if self.proxy_url:
+            self.session.proxies.update({
+                "http": self.proxy_url,
+                "https": self.proxy_url,
+            })
+            log.info("[DeltaBroker] Static Outbound Proxy active: %s", self._mask_proxy(self.proxy_url))
+
+    @staticmethod
+    def _mask_proxy(proxy: str) -> str:
+        """Masks proxy credentials for safe logging."""
+        if not proxy or "@" not in proxy:
+            return proxy
+        try:
+            parts = proxy.split("@")
+            prefix = parts[0].split("://")
+            scheme = prefix[0] + "://" if len(prefix) > 1 else ""
+            return f"{scheme}****:****@{parts[1]}"
+        except Exception:
+            return "***masked_proxy***"
+
     def _generate_signature(self, method: str, path: str, payload: str = "", query: str = "") -> tuple[str, str]:
         """Generates required HMAC-SHA256 signature for Delta Exchange REST API v2 with clock calibration."""
         adjusted_time = int(time.time() + self._time_offset)
@@ -166,8 +188,18 @@ class DeltaTestnetBroker:
                     full_u = f"{url}?{query_str}" if query_str else url
                     req_data = payload_str.encode("utf-8") if payload_str else None
                     u_req = urllib.request.Request(full_u, data=req_data, headers=hdr, method=method.upper())
-                    with urllib.request.urlopen(u_req, timeout=8) as u_res:
-                        return json.loads(u_res.read().decode("utf-8")), None, u_res.status
+
+                    if self.proxy_url:
+                        proxy_handler = urllib.request.ProxyHandler({
+                            "http": self.proxy_url,
+                            "https": self.proxy_url,
+                        })
+                        opener = urllib.request.build_opener(proxy_handler)
+                        with opener.open(u_req, timeout=8) as u_res:
+                            return json.loads(u_res.read().decode("utf-8")), None, u_res.status
+                    else:
+                        with urllib.request.urlopen(u_req, timeout=8) as u_res:
+                            return json.loads(u_res.read().decode("utf-8")), None, u_res.status
                 except urllib.error.HTTPError as h_err:
                     try:
                         return json.loads(h_err.read().decode("utf-8")), None, h_err.code
@@ -180,6 +212,17 @@ class DeltaTestnetBroker:
         if res_data is None:
             log.warning("Delta API request failed on %s %s: %s", method, path, err_str)
             return {"error": err_str, "status": "NETWORK_ERROR"}
+
+        # Detect IP Whitelist / 403 Forbidden errors and provide actionable fix guidance
+        if status_code == 403 or (isinstance(res_data, dict) and isinstance(res_data.get("error"), dict) and res_data["error"].get("code") in ("ip_not_whitelisted", "invalid_api_key")):
+            log.warning(
+                "⚠️ Delta Exchange 403 / IP Whitelist Error on %s %s! "
+                "Outgoing public IP rejected by Delta. "
+                "Solutions: 1) Add static proxy DELTA_OUTBOUND_PROXY in .env, "
+                "2) Whitelist your VPS static IP in Delta API settings, or "
+                "3) Leave IP Whitelist blank in Delta API keys for unrestricted testnet trading.",
+                method, path,
+            )
 
         # Handle HTTP 429 (Too Many Requests) gracefully with exponential backoff (1s -> 2s)
         if status_code == 429:
