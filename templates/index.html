@@ -723,7 +723,7 @@
             try {
                 const res = await fetch('/api/delta/wallet');
                 const data = await res.json();
-                if (data && data.success) {
+                if (data) {
                     const eqEl = document.getElementById('delta-total-balance');
                     if (eqEl) {
                         eqEl.innerText = `$${parseFloat(data.total_equity || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ${data.currency || 'USDT'}`;
@@ -731,11 +731,15 @@
 
                     const badge = document.getElementById('delta-mode-badge');
                     if (badge) {
-                        badge.innerText = data.mode || 'TESTNET';
                         if (data.status === 'CONNECTED') {
-                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400';
+                            badge.innerText = data.mode || 'DELTA LIVE';
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+                        } else if (data.status === 'AUTH_FAILED' || data.mode === 'DELTA AUTH ERROR') {
+                            badge.innerText = 'AUTH / IP ERROR';
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
                         } else {
-                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan';
+                            badge.innerText = data.mode || 'PAPER VIRTUAL';
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan border border-cyan-500/30';
                         }
                     }
 
@@ -753,7 +757,14 @@
                     }
 
                     const ratEl = document.getElementById('delta-status-rationale');
-                    if (ratEl) ratEl.innerText = data.detail || 'Delta Exchange Capital Allocation';
+                    if (ratEl) {
+                        ratEl.innerText = data.detail || 'Delta Exchange Capital Allocation';
+                        if (data.status === 'AUTH_FAILED') {
+                            ratEl.className = 'text-[11px] text-rose-400 font-mono truncate';
+                        } else {
+                            ratEl.className = 'text-[11px] text-slate-400 italic truncate';
+                        }
+                    }
 
                     // Update Chart
                     if (deltaChartInstance && data.history && data.history.length > 0) {

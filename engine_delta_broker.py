@@ -24,9 +24,15 @@ import hmac
 import json
 import logging
 import os
+from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
 import requests
+from dotenv import load_dotenv
+
+# Ensure .env is always loaded before reading Delta configuration
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(ENV_PATH)
 
 log = logging.getLogger("delta_broker")
 
@@ -416,6 +422,25 @@ class DeltaTestnetBroker:
                                 "leverage": 10,
                                 "detail": f"Delta Exchange ({'Testnet' if is_testnet else 'Live'}) API Linked // Live Wallet Synced // Margin: {util_pct}%",
                             }
+
+                # If exchange returned an error response
+                if isinstance(bal_res, dict) and not bal_res.get("success", False):
+                    err = bal_res.get("error") or bal_res.get("message") or "Authentication or IP rejected"
+                    if isinstance(err, dict):
+                        err = err.get("code") or err.get("message") or str(err)
+                    return {
+                        "success": False,
+                        "mode": "DELTA AUTH ERROR",
+                        "status": "AUTH_FAILED",
+                        "currency": "USDT",
+                        "total_equity": 0.0,
+                        "available_balance": 0.0,
+                        "position_margin": 0.0,
+                        "unrealized_pnl": 0.0,
+                        "margin_utilization_pct": 0.0,
+                        "leverage": 10,
+                        "detail": f"⚠️ Delta Exchange API Error: '{err}' // Check DELTA_API_KEY, SECRET, BASE_URL or IP Whitelist",
+                    }
             except Exception as exc:
                 log.warning("Delta get_financial_summary failed, falling back to simulated ledger: %s", exc)
 

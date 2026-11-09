@@ -19,6 +19,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
+
+# Ensure .env is loaded before importing brokers or submodules
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(ENV_PATH)
 
 # Windows console UTF-8 resilience
 if sys.platform == "win32":
