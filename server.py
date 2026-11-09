@@ -297,6 +297,9 @@ def get_screener() -> Dict[str, Any]:
     return {"screener_text": screener_text}
 
 
+DELTA_BALANCE_HISTORY: collections.deque[Dict[str, Any]] = collections.deque(maxlen=60)
+
+
 @app.get("/api/delta")
 def get_delta_status() -> Dict[str, Any]:
     return {
@@ -307,6 +310,33 @@ def get_delta_status() -> Dict[str, Any]:
         "product_cache": DELTA_BROKER._product_cache,
         "balance": DELTA_BROKER.get_balance() if (DELTA_BROKER.enabled and DELTA_BROKER.api_key) else {"status": "DISABLED_OR_NO_KEYS"},
     }
+
+
+@app.get("/api/delta/wallet")
+def get_delta_wallet() -> Dict[str, Any]:
+    """Returns high-fidelity Delta account money balance, available capital, margin utilization, and trend history."""
+    summary = DELTA_BROKER.get_financial_summary(paper_broker=PAPER_BROKER)
+    now_str = datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+    if not DELTA_BALANCE_HISTORY:
+        DELTA_BALANCE_HISTORY.append({
+            "time": "Start",
+            "equity": summary["total_equity"],
+            "available": summary["available_balance"],
+            "margin": summary["position_margin"],
+        })
+
+    last_val = DELTA_BALANCE_HISTORY[-1]["equity"]
+    if len(DELTA_BALANCE_HISTORY) == 1 or abs(last_val - summary["total_equity"]) > 0.001 or len(DELTA_BALANCE_HISTORY) < 3:
+        DELTA_BALANCE_HISTORY.append({
+            "time": now_str,
+            "equity": summary["total_equity"],
+            "available": summary["available_balance"],
+            "margin": summary["position_margin"],
+        })
+
+    summary["history"] = list(DELTA_BALANCE_HISTORY)
+    return summary
 
 
 @app.post("/api/control/pause")

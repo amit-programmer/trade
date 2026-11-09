@@ -186,60 +186,60 @@
             </div>
         </section>
 
-        <!-- Live Positions & Pending Approvals Section -->
-        <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            <!-- Open Positions Table (2 Cols) -->
-            <div class="lg:col-span-2 bg-cybercard rounded-2xl p-5 glow-border space-y-4">
-                <div class="flex items-center justify-between border-b border-cyberborder pb-3">
-                    <div class="flex items-center space-x-2">
-                        <span class="text-lg">💼</span>
-                        <h3 class="text-base font-bold font-mono tracking-wider uppercase text-white">LIVE ACTIVE POSITIONS</h3>
-                        <span id="open-pos-count" class="px-2 py-0.5 rounded text-xs font-mono bg-cyan-500/20 text-cyancyan">0 OPEN</span>
-                    </div>
-                    <button onclick="fetchLatestData()" class="text-xs font-mono text-slate-400 hover:text-white transition flex items-center space-x-1">
-                        <span>🔄</span>
-                        <span>REFRESH</span>
-                    </button>
+        <!-- Live Positions & Pending Approvals Section (Full Width Table) -->
+        <section class="bg-cybercard rounded-2xl p-5 glow-border space-y-4">
+            <div class="flex items-center justify-between border-b border-cyberborder pb-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-lg">💼</span>
+                    <h3 class="text-base font-bold font-mono tracking-wider uppercase text-white">LIVE ACTIVE POSITIONS</h3>
+                    <span id="open-pos-count" class="px-2 py-0.5 rounded text-xs font-mono bg-cyan-500/20 text-cyancyan">0 OPEN</span>
                 </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-xs font-mono">
-                        <thead class="bg-cyberdark text-slate-400 uppercase tracking-wider border-b border-cyberborder">
-                            <tr>
-                                <th class="p-2.5">Asset</th>
-                                <th class="p-2.5">Side</th>
-                                <th class="p-2.5">Entry</th>
-                                <th class="p-2.5">Stop / BE</th>
-                                <th class="p-2.5">Target</th>
-                                <th class="p-2.5">Stage</th>
-                                <th class="p-2.5 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="open-positions-tbody" class="divide-y divide-cyberborder">
-                            <tr>
-                                <td colspan="7" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- Pending Approvals Section (Shows in HUMAN mode) -->
-                <div id="pending-section" class="border-t border-cyberborder pt-4 mt-2">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-xs font-bold font-mono uppercase tracking-wider text-amber-400 flex items-center space-x-2">
-                            <span>⏳</span>
-                            <span>PENDING HUMAN APPROVAL SETUPS</span>
-                        </h4>
-                        <span id="pending-count-badge" class="text-xs font-mono text-slate-400">0 PENDING</span>
-                    </div>
-                    <div id="pending-container" class="space-y-2">
-                        <div class="text-xs text-slate-500 italic p-2 text-center bg-cyberdark rounded-lg">No pending trade confirmations.</div>
-                    </div>
-                </div>
+                <button onclick="fetchLatestData()" class="text-xs font-mono text-slate-400 hover:text-white transition flex items-center space-x-1">
+                    <span>🔄</span>
+                    <span>REFRESH</span>
+                </button>
             </div>
 
-            <!-- Equity Curve Chart & Adaptive Parameters (1 Col) -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs font-mono">
+                    <thead class="bg-cyberdark text-slate-400 uppercase tracking-wider border-b border-cyberborder">
+                        <tr>
+                            <th class="p-2.5">Asset</th>
+                            <th class="p-2.5">Side</th>
+                            <th class="p-2.5">Entry</th>
+                            <th class="p-2.5">Stop / BE</th>
+                            <th class="p-2.5">Target</th>
+                            <th class="p-2.5">Stage</th>
+                            <th class="p-2.5 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="open-positions-tbody" class="divide-y divide-cyberborder">
+                        <tr>
+                            <td colspan="7" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pending Approvals Section (Shows in HUMAN mode) -->
+            <div id="pending-section" class="border-t border-cyberborder pt-4 mt-2">
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="text-xs font-bold font-mono uppercase tracking-wider text-amber-400 flex items-center space-x-2">
+                        <span>⏳</span>
+                        <span>PENDING HUMAN APPROVAL SETUPS</span>
+                    </h4>
+                    <span id="pending-count-badge" class="text-xs font-mono text-slate-400">0 PENDING</span>
+                </div>
+                <div id="pending-container" class="space-y-2">
+                    <div class="text-xs text-slate-500 italic p-2 text-center bg-cyberdark rounded-lg">No pending trade confirmations.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Capital, Performance & Delta Wallet Analytics (2 Columns Side-by-Side) -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Card 1: Equity Curve Chart & Adaptive Parameters -->
             <div class="bg-cybercard rounded-2xl p-5 glow-border space-y-4 flex flex-col justify-between">
                 <div>
                     <div class="flex items-center justify-between border-b border-cyberborder pb-3 mb-3">
@@ -278,6 +278,51 @@
                     <div class="text-[11px] text-slate-400 italic truncate" id="tune-rationale">Institutional Baseline Settings active</div>
                 </div>
             </div>
+
+            <!-- Card 2: Delta Account Money Balance & Capital Metrics (Exact matching form) -->
+            <div class="bg-cybercard rounded-2xl p-5 glow-border space-y-4 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between border-b border-cyberborder pb-3 mb-3">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-lg">🏦</span>
+                            <h3 class="text-base font-bold font-mono tracking-wider uppercase text-white">DELTA ACCOUNT BALANCE</h3>
+                            <span id="delta-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">TESTNET</span>
+                        </div>
+                        <span id="delta-total-balance" class="text-xs font-bold font-mono text-emerald-400">$1,000.00 USDT</span>
+                    </div>
+
+                    <div class="h-44 w-full">
+                        <canvas id="deltaBalanceChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Delta Live Capital Metrics Panel (Matching AI ADAPTIVE PARAMETERS panel) -->
+                <div class="bg-cyberdark p-3.5 rounded-xl border border-cyberborder space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-mono font-bold text-cyancyan uppercase">⚡ DELTA MARGIN & CAPITAL METRICS</span>
+                        <button onclick="fetchDeltaWallet(true)" id="delta-sync-btn" class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan hover:bg-cyan-500/30 transition flex items-center space-x-1">
+                            <span id="delta-sync-icon">🔄</span>
+                            <span>SYNC BALANCE</span>
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
+                            <div class="text-[10px] text-slate-400 mono-font">AVAILABLE CASH</div>
+                            <div class="text-xs font-bold text-white mono-font" id="delta-avail-cash">$1,000.00</div>
+                        </div>
+                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
+                            <div class="text-[10px] text-slate-400 mono-font">POSITION MARGIN</div>
+                            <div class="text-xs font-bold text-white mono-font" id="delta-pos-margin">$0.00</div>
+                        </div>
+                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
+                            <div class="text-[10px] text-slate-400 mono-font">UNREALIZED PNL</div>
+                            <div class="text-xs font-bold text-emerald-400 mono-font" id="delta-unrealized-pnl">+$0.00</div>
+                        </div>
+                    </div>
+                    <div class="text-[11px] text-slate-400 italic truncate" id="delta-status-rationale">Delta Exchange Testnet API Connected // Real-time Margin Utilization: 0.0%</div>
+                </div>
+            </div>
+
         </section>
 
         <!-- Live Terminal Log Box ($ tail -f live.log) -->
@@ -314,6 +359,7 @@
         let currentMode = "HUMAN";
         let isScanning = true;
         let equityChartInstance = null;
+        let deltaChartInstance = null;
         let ws = null;
 
         // Initialize Equity Curve Line Chart
@@ -346,6 +392,71 @@
                         y: {
                             grid: { color: 'rgba(255, 255, 255, 0.05)' },
                             ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Initialize Delta Balance & Capital Curve Line Chart
+        function initDeltaChart() {
+            const el = document.getElementById('deltaBalanceChart');
+            if (!el) return;
+            const ctx = el.getContext('2d');
+            deltaChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Start'],
+                    datasets: [
+                        {
+                            label: 'Total Equity ($)',
+                            data: [1000.0],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                            fill: true,
+                            tension: 0.3,
+                            borderWidth: 2,
+                            pointRadius: 2,
+                            pointHoverRadius: 4,
+                        },
+                        {
+                            label: 'Available Cash ($)',
+                            data: [1000.0],
+                            borderColor: '#06b6d4',
+                            borderDash: [3, 3],
+                            fill: false,
+                            tension: 0.3,
+                            borderWidth: 1.5,
+                            pointRadius: 0,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            align: 'end',
+                            labels: {
+                                color: '#94a3b8',
+                                font: { family: 'JetBrains Mono', size: 9 },
+                                boxWidth: 10,
+                                boxHeight: 10,
+                                padding: 6,
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: {
+                                color: '#94a3b8',
+                                font: { family: 'JetBrains Mono', size: 10 },
+                                callback: function(value) { return '$' + value; }
+                            }
                         }
                     }
                 }
@@ -605,6 +716,73 @@
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
+        // Fetch Delta Exchange Money Balance & Capital Metrics
+        async function fetchDeltaWallet(showFeedback = false) {
+            const syncIcon = document.getElementById('delta-sync-icon');
+            if (syncIcon) syncIcon.classList.add('animate-spin');
+            try {
+                const res = await fetch('/api/delta/wallet');
+                const data = await res.json();
+                if (data && data.success) {
+                    const eqEl = document.getElementById('delta-total-balance');
+                    if (eqEl) {
+                        eqEl.innerText = `$${parseFloat(data.total_equity || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ${data.currency || 'USDT'}`;
+                    }
+
+                    const badge = document.getElementById('delta-mode-badge');
+                    if (badge) {
+                        badge.innerText = data.mode || 'TESTNET';
+                        if (data.status === 'CONNECTED') {
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400';
+                        } else {
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan';
+                        }
+                    }
+
+                    const cashEl = document.getElementById('delta-avail-cash');
+                    if (cashEl) cashEl.innerText = `$${parseFloat(data.available_balance || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+                    const posEl = document.getElementById('delta-pos-margin');
+                    if (posEl) posEl.innerText = `$${parseFloat(data.position_margin || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+                    const upnlEl = document.getElementById('delta-unrealized-pnl');
+                    if (upnlEl) {
+                        const upnl = parseFloat(data.unrealized_pnl || 0);
+                        upnlEl.innerText = `${upnl >= 0 ? '+' : ''}$${upnl.toFixed(2)}`;
+                        upnlEl.className = `text-xs font-bold mono-font ${upnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+                    }
+
+                    const ratEl = document.getElementById('delta-status-rationale');
+                    if (ratEl) ratEl.innerText = data.detail || 'Delta Exchange Capital Allocation';
+
+                    // Update Chart
+                    if (deltaChartInstance && data.history && data.history.length > 0) {
+                        const labels = data.history.map((h, i) => h.time || `#${i+1}`);
+                        const eqData = data.history.map(h => parseFloat(h.equity || 0));
+                        const availData = data.history.map(h => parseFloat(h.available || 0));
+                        deltaChartInstance.data.labels = labels;
+                        deltaChartInstance.data.datasets[0].data = eqData;
+                        deltaChartInstance.data.datasets[1].data = availData;
+                        deltaChartInstance.update();
+                    }
+
+                    if (showFeedback) {
+                        appendLog({
+                            time: new Date().toLocaleTimeString(),
+                            level: 'INFO',
+                            msg: `[DELTA] Wallet synchronized: Total $${data.total_equity} USDT | Available: $${data.available_balance} USDT | Margin: $${data.position_margin} USDT`
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('Delta wallet fetch error:', err);
+            } finally {
+                if (syncIcon) {
+                    setTimeout(() => syncIcon.classList.remove('animate-spin'), 600);
+                }
+            }
+        }
+
         // Fetch Full Data Snapshot
         async function fetchLatestData() {
             try {
@@ -621,6 +799,7 @@
                 updateAgentsUI(agentsRes);
                 renderOpenPositions(paperRes.open_positions);
                 renderPendingApprovals(paperRes.pending_setups);
+                fetchDeltaWallet(false);
 
                 // Update Adaptive Panel
                 if (tunerRes) {
@@ -666,8 +845,10 @@
         // Initialize on DOM Ready
         window.addEventListener('DOMContentLoaded', () => {
             initChart();
+            initDeltaChart();
             connectWebSocket();
             fetchLatestData();
+            fetchDeltaWallet(false);
             setInterval(fetchLatestData, 10000);
         });
     </script>

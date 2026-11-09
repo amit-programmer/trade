@@ -372,6 +372,92 @@ class DeltaTestnetBroker:
             "detail": f"Available USDT: ${available_usdt:,.2f} | Required: ${required_margin:,.2f}",
         }
 
+    def get_financial_summary(self, paper_broker: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Fetches or calculates high-fidelity account money balance summary.
+        If Delta Exchange API is enabled and active, retrieves live USDT wallet balance,
+        available margin, position margin, and unrealized PnL from the exchange.
+        Otherwise falls back cleanly to the paper broker's simulated equity ledger.
+        """
+        # 1. Attempt live Delta Exchange wallet query if credentials exist
+        if self.enabled and self.api_key and self.api_secret:
+            try:
+                bal_res = self.get_balance()
+                if isinstance(bal_res, dict) and bal_res.get("success", False):
+                    items = bal_res.get("result", [])
+                    if isinstance(items, dict):
+                        items = [items]
+
+                    for item in items:
+                        sym = str(item.get("asset_symbol") or item.get("symbol") or "").upper()
+                        if "USDT" in sym or item.get("asset_id") == 1:
+                            total = float(item.get("balance") or item.get("equity") or 0.0)
+                            avail = float(item.get("available_balance") or item.get("available_to_trade") or 0.0)
+                            pos_margin = float(item.get("position_margin") or 0.0)
+                            ord_margin = float(item.get("order_margin") or 0.0)
+                            upnl = float(item.get("unrealized_pnl") or 0.0)
+
+                            tot_margin = pos_margin + ord_margin
+                            if total == 0.0 and avail > 0.0:
+                                total = avail + tot_margin + upnl
+
+                            util_pct = round((tot_margin / total * 100), 2) if total > 0 else 0.0
+                            is_testnet = "testnet" in self.base_url.lower()
+                            return {
+                                "success": True,
+                                "mode": "DELTA TESTNET" if is_testnet else "DELTA LIVE",
+                                "status": "CONNECTED",
+                                "currency": "USDT",
+                                "total_equity": round(total, 2),
+                                "available_balance": round(avail, 2),
+                                "position_margin": round(tot_margin, 2),
+                                "unrealized_pnl": round(upnl, 2),
+                                "margin_utilization_pct": util_pct,
+                                "leverage": 10,
+                                "detail": f"Delta Exchange ({'Testnet' if is_testnet else 'Live'}) API Linked // Live Wallet Synced // Margin: {util_pct}%",
+                            }
+            except Exception as exc:
+                log.warning("Delta get_financial_summary failed, falling back to simulated ledger: %s", exc)
+
+        # 2. Fallback to Virtual / Paper portfolio
+        initial_capital = 1000.0
+        try:
+            initial_capital = float(os.getenv("ACCOUNT_BALANCE", "1000.0"))
+        except Exception:
+            initial_capital = 1000.0
+
+        cum_pnl = 0.0
+        open_margin = 0.0
+        unrealized = 0.0
+
+        if paper_broker:
+            try:
+                closed = paper_broker.get_closed_positions()
+                cum_pnl = sum(float(p.get("total_pnl_usd", 0.0)) for p in closed)
+                opens = paper_broker.get_open_positions()
+                open_margin = sum(float(p.get("position_size_usd", 20.0)) for p in opens)
+                unrealized = sum(float(p.get("unrealized_pnl_usd", 0.0)) for p in opens)
+            except Exception as e:
+                log.warning("Paper broker balance calculation error: %s", e)
+
+        total_eq = initial_capital + cum_pnl + unrealized
+        available = max(0.0, total_eq - open_margin)
+        util_pct = round((open_margin / total_eq * 100), 2) if total_eq > 0 else 0.0
+
+        return {
+            "success": True,
+            "mode": "PAPER VIRTUAL",
+            "status": "PAPER_PORTFOLIO",
+            "currency": "USDT",
+            "total_equity": round(total_eq, 2),
+            "available_balance": round(available, 2),
+            "position_margin": round(open_margin, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "margin_utilization_pct": util_pct,
+            "leverage": 10,
+            "detail": f"Paper Virtual Wallet Active // Base Capital: ${initial_capital:,.2f} USDT // Configure DELTA_API_KEY for Live Exchange Balance",
+        }
+
     def get_open_positions_from_exchange(self) -> List[Dict[str, Any]]:
         """
         Fetches live open perpetual positions from Delta Exchange.
