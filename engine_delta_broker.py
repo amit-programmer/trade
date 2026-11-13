@@ -349,39 +349,50 @@ class DeltaTestnetBroker:
         items = bal_res.get("result", [])
         if isinstance(items, dict):
             items = [items]
-        available_usdt = 0.0
-        found_usdt = False
+        available_margin = 0.0
+        found_curr = False
+
+        meta = bal_res.get("meta", {}) if isinstance(bal_res, dict) else {}
+        try:
+            meta_avail = float(meta.get("net_equity") or 0.0)
+        except Exception:
+            meta_avail = 0.0
+
         for item in items:
             sym = str(item.get("asset_symbol") or item.get("symbol") or "").upper()
-            if "USDT" in sym or item.get("asset_id") == 1:
-                found_usdt = True
+            if sym in ("USD", "USDT") or item.get("asset_id") in (3, 1):
+                found_curr = True
                 raw_avail = item.get("available_balance") or item.get("available_to_trade") or item.get("balance") or 0.0
                 try:
-                    available_usdt = float(raw_avail)
+                    available_margin = float(raw_avail)
                 except (ValueError, TypeError):
-                    available_usdt = 0.0
+                    available_margin = 0.0
                 break
 
-        if not found_usdt:
+        if not found_curr and meta_avail > 0:
+            available_margin = meta_avail
+            found_curr = True
+
+        if not found_curr:
             return {
                 "sufficient": False,
                 "available_margin": 0.0,
                 "required_margin": required_margin,
-                "detail": "USDT wallet balance not found on Delta Exchange",
+                "detail": "USD / USDT wallet balance not found on Delta Exchange",
             }
 
-        is_sufficient = available_usdt >= required_margin
+        is_sufficient = available_margin >= required_margin
         return {
             "sufficient": is_sufficient,
-            "available_margin": available_usdt,
+            "available_margin": available_margin,
             "required_margin": required_margin,
-            "detail": f"Available USDT: ${available_usdt:,.2f} | Required: ${required_margin:,.2f}",
+            "detail": f"Available Balance: ${available_margin:,.2f} | Required: ${required_margin:,.2f}",
         }
 
     def get_financial_summary(self, paper_broker: Optional[Any] = None) -> Dict[str, Any]:
         """
         Fetches or calculates high-fidelity account money balance summary.
-        If Delta Exchange API is enabled and active, retrieves live USDT wallet balance,
+        If Delta Exchange API is enabled and active, retrieves live USD / USDT wallet balance,
         available margin, position margin, and unrealized PnL from the exchange.
         Otherwise falls back cleanly to the paper broker's simulated equity ledger.
         """
@@ -394,34 +405,65 @@ class DeltaTestnetBroker:
                     if isinstance(items, dict):
                         items = [items]
 
+                    meta = bal_res.get("meta", {}) if isinstance(bal_res, dict) else {}
+                    meta_equity = 0.0
+                    try:
+                        meta_equity = float(meta.get("net_equity") or 0.0)
+                    except Exception:
+                        meta_equity = 0.0
+
+                    primary_item = None
                     for item in items:
                         sym = str(item.get("asset_symbol") or item.get("symbol") or "").upper()
-                        if "USDT" in sym or item.get("asset_id") == 1:
-                            total = float(item.get("balance") or item.get("equity") or 0.0)
-                            avail = float(item.get("available_balance") or item.get("available_to_trade") or 0.0)
-                            pos_margin = float(item.get("position_margin") or 0.0)
-                            ord_margin = float(item.get("order_margin") or 0.0)
-                            upnl = float(item.get("unrealized_pnl") or 0.0)
+                        if sym in ("USD", "USDT") or item.get("asset_id") in (3, 1):
+                            primary_item = item
+                            break
 
-                            tot_margin = pos_margin + ord_margin
-                            if total == 0.0 and avail > 0.0:
-                                total = avail + tot_margin + upnl
+                    if not primary_item and items:
+                        for item in items:
+                            try:
+                                if float(item.get("balance") or item.get("available_balance") or 0.0) > 0:
+                                    primary_item = item
+                                    break
+                            except Exception:
+                                continue
+                        if not primary_item:
+                            primary_item = items[0]
 
-                            util_pct = round((tot_margin / total * 100), 2) if total > 0 else 0.0
-                            is_testnet = "testnet" in self.base_url.lower()
-                            return {
-                                "success": True,
-                                "mode": "DELTA TESTNET" if is_testnet else "DELTA LIVE",
-                                "status": "CONNECTED",
-                                "currency": "USDT",
-                                "total_equity": round(total, 2),
-                                "available_balance": round(avail, 2),
-                                "position_margin": round(tot_margin, 2),
-                                "unrealized_pnl": round(upnl, 2),
-                                "margin_utilization_pct": util_pct,
-                                "leverage": 10,
-                                "detail": f"Delta Exchange ({'Testnet' if is_testnet else 'Live'}) API Linked // Live Wallet Synced // Margin: {util_pct}%",
-                            }
+                    if primary_item:
+                        sym = str(primary_item.get("asset_symbol") or primary_item.get("symbol") or "USD").upper()
+                        total = float(primary_item.get("balance") or primary_item.get("equity") or 0.0)
+                        avail = float(primary_item.get("available_balance") or primary_item.get("available_to_trade") or 0.0)
+                        pos_margin = float(primary_item.get("position_margin") or 0.0)
+                        ord_margin = float(primary_item.get("order_margin") or 0.0)
+                        upnl = float(primary_item.get("unrealized_pnl") or 0.0)
+                        bal_inr = float(primary_item.get("balance_inr") or 0.0)
+
+                        tot_margin = pos_margin + ord_margin
+                        if total == 0.0 and avail > 0.0:
+                            total = avail + tot_margin + upnl
+                        if total == 0.0 and meta_equity > 0.0:
+                            total = meta_equity
+                        if avail == 0.0 and meta_equity > 0.0 and tot_margin == 0.0:
+                            avail = meta_equity
+
+                        util_pct = round((tot_margin / total * 100), 2) if total > 0 else 0.0
+                        is_testnet = "testnet" in self.base_url.lower()
+                        inr_txt = f" (₹{bal_inr:,.2f} INR)" if bal_inr > 0 else ""
+
+                        return {
+                            "success": True,
+                            "mode": "DELTA TESTNET" if is_testnet else "DELTA LIVE",
+                            "status": "CONNECTED",
+                            "currency": sym,
+                            "total_equity": round(total, 2),
+                            "available_balance": round(avail, 2),
+                            "position_margin": round(tot_margin, 2),
+                            "unrealized_pnl": round(upnl, 2),
+                            "margin_utilization_pct": util_pct,
+                            "leverage": 10,
+                            "detail": f"Delta Exchange ({'Testnet' if is_testnet else 'Live'}) Linked // Real Balance: ${total:,.2f} {sym}{inr_txt} // Margin: {util_pct}%",
+                        }
 
                 # If exchange returned an error response
                 if isinstance(bal_res, dict) and not bal_res.get("success", False):
