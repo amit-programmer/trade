@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QUANTUM SMC PRO // INSTITUTIONAL CRYPTO TRADING TERMINAL</title>
+    <title>QUANTUM SMC PRO // INSTITUTIONAL TRADING TERMINAL</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Chart.js CDN -->
@@ -15,20 +15,20 @@
             theme: {
                 extend: {
                     colors: {
-                        cyberdark: '#080b11',
-                        cybercard: '#0e1420',
-                        cybercardalt: '#121a2a',
-                        cyberborder: '#1a2333',
-                        cyancyan: '#00e5ff',
-                        cyangreen: '#00ff88',
-                        cyanpink: '#ff0055',
-                        cyanpurple: '#bd00ff',
-                        cyanyellow: '#ffd000',
+                        cyberdark: '#080c14',
+                        cybercard: '#0c121e',
+                        cybercardalt: '#111a2c',
+                        cyberborder: '#172338',
+                        cyancyan: '#00f0ff',
+                        cyangreen: '#00e676',
+                        cyanpink: '#ff1744',
+                        cyanpurple: '#b388ff',
+                        cyanyellow: '#ffb300',
                     },
                     boxShadow: {
-                        'neon-green': '0 0 15px rgba(0, 255, 136, 0.35)',
-                        'neon-cyan': '0 0 15px rgba(0, 229, 255, 0.35)',
-                        'neon-pink': '0 0 15px rgba(255, 0, 85, 0.35)',
+                        'neon-green': '0 0 16px rgba(0, 230, 118, 0.35)',
+                        'neon-cyan': '0 0 16px rgba(0, 240, 255, 0.35)',
+                        'neon-pink': '0 0 16px rgba(255, 23, 68, 0.35)',
                     }
                 }
             }
@@ -38,23 +38,27 @@
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Rajdhani:wght@500;600;700&display=swap');
         body {
             font-family: 'Rajdhani', sans-serif;
-            background-color: #080b11;
+            background-color: #080c14;
             color: #e2e8f0;
         }
         .mono-font {
             font-family: 'JetBrains Mono', monospace;
+            font-variant-numeric: tabular-nums;
+        }
+        .tabular-nums {
+            font-variant-numeric: tabular-nums;
         }
         .scanlines {
-            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 255, 0, 0.02));
             background-size: 100% 3px, 6px 100%;
         }
         .glow-border {
-            border: 1px solid #1a2333;
-            transition: all 0.25s ease;
+            border: 1px solid #172338;
+            transition: all 0.2s ease;
         }
         .glow-border:hover {
-            border-color: #00e5ff;
-            box-shadow: 0 0 14px rgba(0, 229, 255, 0.15);
+            border-color: #00f0ff;
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.16);
         }
         /* Custom scrollbar */
         ::-webkit-scrollbar {
@@ -62,33 +66,48 @@
             height: 5px;
         }
         ::-webkit-scrollbar-track {
-            background: #080b11;
+            background: #080c14;
         }
         ::-webkit-scrollbar-thumb {
-            background: #1e293b;
+            background: #172338;
             border-radius: 3px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: #00e5ff;
+            background: #00f0ff;
+        }
+        /* Price update flash animations */
+        @keyframes flash-green {
+            0% { background-color: rgba(0, 230, 118, 0.35); }
+            100% { background-color: transparent; }
+        }
+        @keyframes flash-red {
+            0% { background-color: rgba(255, 23, 68, 0.35); }
+            100% { background-color: transparent; }
+        }
+        .flash-up {
+            animation: flash-green 0.7s ease-out;
+        }
+        .flash-down {
+            animation: flash-red 0.7s ease-out;
         }
         /* Orderbook Depth Bar */
         .depth-bar-bid {
-            background: linear-gradient(to left, rgba(0, 255, 136, 0.18), transparent);
+            background: linear-gradient(to left, rgba(0, 230, 118, 0.22), transparent);
         }
         .depth-bar-ask {
-            background: linear-gradient(to left, rgba(255, 0, 85, 0.18), transparent);
+            background: linear-gradient(to left, rgba(255, 23, 68, 0.22), transparent);
         }
         /* Active Ticker Card Highlight */
         .ticker-card-active {
-            border-color: #00e5ff !important;
-            box-shadow: 0 0 12px rgba(0, 229, 255, 0.3) !important;
-            background: linear-gradient(180deg, #131c2d 0%, #0e1420 100%) !important;
+            border-color: #00f0ff !important;
+            box-shadow: 0 0 14px rgba(0, 240, 255, 0.32) !important;
+            background: linear-gradient(180deg, #131d2f 0%, #0c121e 100%) !important;
         }
         /* Tab Button Active */
         .dock-tab-active {
-            border-bottom: 2px solid #00e5ff !important;
-            color: #00e5ff !important;
-            background-color: rgba(0, 229, 255, 0.08);
+            border-bottom: 2px solid #00f0ff !important;
+            color: #00f0ff !important;
+            background-color: rgba(0, 240, 255, 0.08);
         }
     </style>
 </head>
@@ -98,7 +117,7 @@
     <div id="toast-container" class="fixed top-16 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
     <!-- Top Master Control Bar -->
-    <header class="border-b border-cyberborder bg-cybercard/90 backdrop-blur sticky top-0 z-40 px-3 py-2.5">
+    <header class="border-b border-cyberborder bg-cybercard/95 backdrop-blur sticky top-0 z-40 px-3 py-2.5">
         <div class="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
             
             <!-- Brand & Telemetry Status -->
@@ -112,11 +131,11 @@
                         <span id="ws-badge" class="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-400 border border-slate-700">CONNECTING...</span>
                         <span id="latency-badge" class="px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">⚡ 12ms</span>
                     </div>
-                    <p class="text-[11px] text-slate-400 mono-font">Institutional L2 Order Book & AI Dual-Mode Execution Desk</p>
+                    <p class="text-[11px] text-slate-400 mono-font">Institutional L2 Order Book & AI Dual-Mode Execution Terminal</p>
                 </div>
             </div>
 
-            <!-- Master Mode Toggle & Emergency Flatten -->
+            <!-- Master Mode Toggle & Controls -->
             <div class="flex items-center flex-wrap gap-2.5">
                 <div class="flex items-center bg-cyberdark border border-cyberborder rounded-xl p-1 shadow-inner">
                     <span class="text-[11px] font-mono uppercase text-slate-400 px-2">Master Mode:</span>
@@ -150,15 +169,15 @@
         </div>
     </header>
 
-    <main class="max-w-[1920px] mx-auto px-3 py-3 space-y-4">
+    <main class="max-w-[1920px] mx-auto px-3 py-3 space-y-3">
 
-        <!-- 1. Top Market Watch / Ticker Carousel Bar (6 Watchlist Symbols) -->
-        <section class="bg-cybercard/80 rounded-xl p-2.5 border border-cyberborder">
+        <!-- 1. Top Market Watch / Ticker Carousel Bar (6 Pairs: BTC, ETH, SOL, XRP, DOGE, XAUT Gold) -->
+        <section class="bg-cybercard rounded-xl p-2.5 border border-cyberborder">
             <div class="flex items-center justify-between mb-2 px-1">
                 <div class="flex items-center space-x-2">
                     <span class="text-xs font-bold font-mono uppercase tracking-widest text-slate-400 flex items-center space-x-1.5">
                         <span class="w-1.5 h-1.5 rounded-full bg-cyancyan animate-pulse"></span>
-                        <span>LIVE 24H TICKER CAROUSEL (HOTKEYS [1]-[6])</span>
+                        <span>INSTITUTIONAL MARKET WATCH (HOTKEYS [1]-[6])</span>
                     </span>
                     <span class="text-[10px] font-mono text-slate-500">// 1-CLICK ACTIVE SWITCH</span>
                 </div>
@@ -168,8 +187,8 @@
                 </div>
             </div>
 
-            <!-- Ticker Cards Grid (6 Columns) -->
-            <div id="ticker-carousel-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+            <!-- Ticker Cards Grid (6 Watchlist Symbols) -->
+            <div id="ticker-carousel-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 <!-- BTC Card -->
                 <div id="ticker-card-BTCUSDT" onclick="switchActiveSymbol('BTCUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all ticker-card-active">
                     <div class="flex items-center justify-between">
@@ -177,15 +196,15 @@
                             <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[1]</span>
                             <span class="font-bold text-white text-xs font-mono">BTC/USDT</span>
                         </div>
-                        <span id="ticker-chg-BTCUSDT" class="text-xs font-bold font-mono text-cyangreen">+2.45%</span>
+                        <span id="ticker-chg-BTCUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+2.45%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-BTCUSDT" class="text-sm font-extrabold font-mono text-white">$91,420.50</span>
-                        <span id="ticker-vol-BTCUSDT" class="text-[10px] font-mono text-slate-500">Vol $1.8B</span>
+                        <span id="ticker-price-BTCUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$91,250.00</span>
+                        <span id="ticker-vol-BTCUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $2.58B</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                        <span>H: <span id="ticker-h-BTCUSDT" class="text-slate-300">$92,100</span></span>
-                        <span>L: <span id="ticker-l-BTCUSDT" class="text-slate-300">$89,200</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+                        <span>H: <span id="ticker-h-BTCUSDT" class="text-slate-300">$92,400</span></span>
+                        <span>L: <span id="ticker-l-BTCUSDT" class="text-slate-300">$89,150</span></span>
                     </div>
                 </div>
 
@@ -196,15 +215,15 @@
                             <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[2]</span>
                             <span class="font-bold text-white text-xs font-mono">ETH/USDT</span>
                         </div>
-                        <span id="ticker-chg-ETHUSDT" class="text-xs font-bold font-mono text-cyangreen">+1.82%</span>
+                        <span id="ticker-chg-ETHUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+3.12%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-ETHUSDT" class="text-sm font-extrabold font-mono text-white">$3,124.80</span>
-                        <span id="ticker-vol-ETHUSDT" class="text-[10px] font-mono text-slate-500">Vol $820M</span>
+                        <span id="ticker-price-ETHUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$3,140.50</span>
+                        <span id="ticker-vol-ETHUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $568M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                        <span>H: <span id="ticker-h-ETHUSDT" class="text-slate-300">$3,180</span></span>
-                        <span>L: <span id="ticker-l-ETHUSDT" class="text-slate-300">$3,040</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+                        <span>H: <span id="ticker-h-ETHUSDT" class="text-slate-300">$3,195</span></span>
+                        <span>L: <span id="ticker-l-ETHUSDT" class="text-slate-300">$3,020</span></span>
                     </div>
                 </div>
 
@@ -215,15 +234,15 @@
                             <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[3]</span>
                             <span class="font-bold text-white text-xs font-mono">SOL/USDT</span>
                         </div>
-                        <span id="ticker-chg-SOLUSDT" class="text-xs font-bold font-mono text-cyanpink">-0.65%</span>
+                        <span id="ticker-chg-SOLUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+5.80%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-SOLUSDT" class="text-sm font-extrabold font-mono text-white">$214.30</span>
-                        <span id="ticker-vol-SOLUSDT" class="text-[10px] font-mono text-slate-500">Vol $410M</span>
+                        <span id="ticker-price-SOLUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$218.40</span>
+                        <span id="ticker-vol-SOLUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $96.5M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                        <span>H: <span id="ticker-h-SOLUSDT" class="text-slate-300">$219.5</span></span>
-                        <span>L: <span id="ticker-l-SOLUSDT" class="text-slate-300">$209.0</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+                        <span>H: <span id="ticker-h-SOLUSDT" class="text-slate-300">$224.5</span></span>
+                        <span>L: <span id="ticker-l-SOLUSDT" class="text-slate-300">$204.0</span></span>
                     </div>
                 </div>
 
@@ -234,15 +253,15 @@
                             <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[4]</span>
                             <span class="font-bold text-white text-xs font-mono">XRP/USDT</span>
                         </div>
-                        <span id="ticker-chg-XRPUSDT" class="text-xs font-bold font-mono text-cyangreen">+5.12%</span>
+                        <span id="ticker-chg-XRPUSDT" class="text-xs font-bold font-mono tabular-nums text-cyanpink">-1.25%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-XRPUSDT" class="text-sm font-extrabold font-mono text-white">$0.8420</span>
-                        <span id="ticker-vol-XRPUSDT" class="text-[10px] font-mono text-slate-500">Vol $290M</span>
+                        <span id="ticker-price-XRPUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$1.1450</span>
+                        <span id="ticker-vol-XRPUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $97.8M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                        <span>H: <span id="ticker-h-XRPUSDT" class="text-slate-300">$0.880</span></span>
-                        <span>L: <span id="ticker-l-XRPUSDT" class="text-slate-300">$0.795</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+                        <span>H: <span id="ticker-h-XRPUSDT" class="text-slate-300">$1.210</span></span>
+                        <span>L: <span id="ticker-l-XRPUSDT" class="text-slate-300">$1.095</span></span>
                     </div>
                 </div>
 
@@ -253,15 +272,15 @@
                             <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[5]</span>
                             <span class="font-bold text-white text-xs font-mono">DOGE/USDT</span>
                         </div>
-                        <span id="ticker-chg-DOGEUSDT" class="text-xs font-bold font-mono text-cyangreen">+3.40%</span>
+                        <span id="ticker-chg-DOGEUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+8.40%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-DOGEUSDT" class="text-sm font-extrabold font-mono text-white">$0.3845</span>
-                        <span id="ticker-vol-DOGEUSDT" class="text-[10px] font-mono text-slate-500">Vol $340M</span>
+                        <span id="ticker-price-DOGEUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$0.3845</span>
+                        <span id="ticker-vol-DOGEUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $158M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                        <span>H: <span id="ticker-h-DOGEUSDT" class="text-slate-300">$0.402</span></span>
-                        <span>L: <span id="ticker-l-DOGEUSDT" class="text-slate-300">$0.365</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+                        <span>H: <span id="ticker-h-DOGEUSDT" class="text-slate-300">$0.412</span></span>
+                        <span>L: <span id="ticker-l-DOGEUSDT" class="text-slate-300">$0.352</span></span>
                     </div>
                 </div>
 
@@ -269,16 +288,16 @@
                 <div id="ticker-card-XAUTUSDT" onclick="switchActiveSymbol('XAUTUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[6]</span>
-                            <span class="font-bold text-amber-400 text-xs font-mono">XAUT/USDT</span>
+                            <span class="text-[10px] font-mono bg-amber-500/20 text-amber-300 px-1 rounded font-bold">[6]</span>
+                            <span class="font-bold text-white text-xs font-mono">XAUT/USDT</span>
                         </div>
-                        <span id="ticker-chg-XAUTUSDT" class="text-xs font-bold font-mono text-cyangreen">+0.45%</span>
+                        <span id="ticker-chg-XAUTUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+0.45%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-XAUTUSDT" class="text-sm font-extrabold font-mono text-white">$2,648.50</span>
-                        <span id="ticker-vol-XAUTUSDT" class="text-[10px] font-mono text-slate-500">Vol $45M</span>
+                        <span id="ticker-price-XAUTUSDT" class="text-sm font-extrabold font-mono tabular-nums text-amber-300">$2,648.50</span>
+                        <span id="ticker-vol-XAUTUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $48.9M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-slate-400">
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
                         <span>H: <span id="ticker-h-XAUTUSDT" class="text-slate-300">$2,665</span></span>
                         <span>L: <span id="ticker-l-XAUTUSDT" class="text-slate-300">$2,635</span></span>
                     </div>
@@ -288,14 +307,14 @@
 
         <!-- 2. Micro-Agents 6-Grid Status Panel -->
         <section>
-            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
                 <!-- Agent 1: Scanner -->
                 <div class="bg-cybercard p-2.5 rounded-xl glow-border">
                     <div class="flex items-center justify-between mb-1">
                         <span class="text-[11px] font-mono font-semibold text-slate-400">01. SCANNER</span>
                         <span id="agent-scanner-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">ACTIVE</span>
                     </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-scanner-detail">5 Pairs | 15m/5m/1h</div>
+                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-scanner-detail">6 Pairs | 15m/5m/1h</div>
                     <div class="text-[10px] text-slate-500 mt-0.5">Binance 24/7 SMC Stream</div>
                 </div>
 
@@ -398,7 +417,7 @@
                             <span class="text-xs font-bold font-mono tracking-wider uppercase text-white">L2 ORDER BOOK</span>
                             <span id="orderbook-symbol-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-800 text-slate-300">BTCUSDT</span>
                         </div>
-                        <span id="orderbook-spread-badge" class="text-[10px] font-mono text-slate-400">Spread: $1.20 (0.001%)</span>
+                        <span id="orderbook-spread-badge" class="text-[10px] font-mono text-slate-400 tabular-nums">Spread: $1.20 (0.001%)</span>
                     </div>
 
                     <!-- Column Header -->
@@ -408,35 +427,23 @@
                         <span class="text-right">Total</span>
                     </div>
 
-                    <!-- Asks List (Top 6 rows, Red) -->
-                    <div id="orderbook-asks" class="space-y-0.5 font-mono text-[11px] overflow-hidden flex flex-col-reverse">
+                    <!-- Asks List (Top rows, Red) -->
+                    <div id="orderbook-asks" class="space-y-0.5 font-mono text-[11px] tabular-nums overflow-hidden flex flex-col-reverse">
                         <!-- Populated by JS -->
-                        <div class="relative flex justify-between py-0.5 px-1 rounded text-cyanpink">
-                            <div class="absolute inset-y-0 right-0 depth-bar-ask w-1/2"></div>
-                            <span class="relative z-10 font-semibold">91,425.50</span>
-                            <span class="relative z-10 text-right text-slate-300">0.842</span>
-                            <span class="relative z-10 text-right text-slate-400">76.9K</span>
-                        </div>
                     </div>
 
                     <!-- Mid-Market Current Price Banner -->
                     <div class="py-1 px-2 my-1 bg-cyberdark rounded border border-cyberborder flex items-center justify-between">
                         <div class="flex items-baseline space-x-2">
-                            <span id="orderbook-mid-price" class="text-sm font-extrabold font-mono text-cyangreen">$91,420.50</span>
+                            <span id="orderbook-mid-price" class="text-sm font-extrabold font-mono tabular-nums text-cyangreen">$91,250.00</span>
                             <span id="orderbook-mid-arrow" class="text-xs text-cyangreen">↗</span>
                         </div>
                         <span id="orderbook-mid-sub" class="text-[10px] font-mono text-slate-400">Mark Price</span>
                     </div>
 
-                    <!-- Bids List (Top 6 rows, Green) -->
-                    <div id="orderbook-bids" class="space-y-0.5 font-mono text-[11px] overflow-hidden">
+                    <!-- Bids List (Top rows, Green) -->
+                    <div id="orderbook-bids" class="space-y-0.5 font-mono text-[11px] tabular-nums overflow-hidden">
                         <!-- Populated by JS -->
-                        <div class="relative flex justify-between py-0.5 px-1 rounded text-cyangreen">
-                            <div class="absolute inset-y-0 right-0 depth-bar-bid w-1/2"></div>
-                            <span class="relative z-10 font-semibold">91,419.00</span>
-                            <span class="relative z-10 text-right text-slate-300">1.250</span>
-                            <span class="relative z-10 text-right text-slate-400">114.2K</span>
-                        </div>
                     </div>
                 </div>
 
@@ -474,7 +481,7 @@
                         <div class="flex justify-between text-[11px] font-mono text-slate-400">
                             <span>Limit Price (USDT):</span>
                         </div>
-                        <input type="number" id="order-limit-price" step="any" placeholder="Enter price" class="w-full bg-cyberdark border border-cyberborder rounded px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:border-cyancyan">
+                        <input type="number" id="order-limit-price" step="any" placeholder="Enter price" class="w-full bg-cyberdark border border-cyberborder rounded px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:border-cyancyan tabular-nums">
                     </div>
 
                     <!-- Leverage Slider -->
@@ -496,10 +503,10 @@
                     <div class="space-y-1.5">
                         <div class="flex justify-between text-[11px] font-mono">
                             <span class="text-slate-400">Position Size (USD):</span>
-                            <span id="order-avail-cash-hint" class="text-slate-500 text-[10px]">Avail: $1,000.00</span>
+                            <span id="order-avail-cash-hint" class="text-slate-500 text-[10px] tabular-nums">Avail: $1,000.00</span>
                         </div>
                         <div class="flex space-x-1">
-                            <input type="number" id="order-size-usd" value="100" min="5" step="10" placeholder="100" class="w-full bg-cyberdark border border-cyberborder rounded px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:border-cyancyan">
+                            <input type="number" id="order-size-usd" value="100" min="5" step="10" placeholder="100" class="w-full bg-cyberdark border border-cyberborder rounded px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:border-cyancyan tabular-nums">
                         </div>
                         <!-- Percent Chips -->
                         <div class="grid grid-cols-4 gap-1 text-center">
@@ -514,11 +521,11 @@
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <div class="space-y-1">
                             <label class="text-[10px] font-mono text-rose-400 block">STOP-LOSS ($)</label>
-                            <input type="number" id="order-sl-input" step="any" placeholder="Auto / Manual" class="w-full bg-cyberdark border border-cyberborder rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-rose-400">
+                            <input type="number" id="order-sl-input" step="any" placeholder="Auto / Manual" class="w-full bg-cyberdark border border-cyberborder rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-rose-400 tabular-nums">
                         </div>
                         <div class="space-y-1">
                             <label class="text-[10px] font-mono text-emerald-400 block">TAKE-PROFIT ($)</label>
-                            <input type="number" id="order-tp-input" step="any" placeholder="Auto / Manual" class="w-full bg-cyberdark border border-cyberborder rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-emerald-400">
+                            <input type="number" id="order-tp-input" step="any" placeholder="Auto / Manual" class="w-full bg-cyberdark border border-cyberborder rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-emerald-400 tabular-nums">
                         </div>
                     </div>
 
@@ -543,7 +550,7 @@
                             <span class="text-base">📈</span>
                             <h3 class="text-sm font-bold font-mono tracking-wider uppercase text-white">EQUITY CURVE & PERFORMANCE</h3>
                         </div>
-                        <span id="chart-net-pnl" class="text-xs font-bold font-mono text-emerald-400">+$0.00</span>
+                        <span id="chart-net-pnl" class="text-xs font-bold font-mono tabular-nums text-emerald-400">+$0.00</span>
                     </div>
 
                     <div class="h-44 w-full">
@@ -584,7 +591,7 @@
                             <h3 class="text-sm font-bold font-mono tracking-wider uppercase text-white">DELTA ACCOUNT BALANCE</h3>
                             <span id="delta-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">TESTNET</span>
                         </div>
-                        <span id="delta-total-balance" class="text-xs font-bold font-mono text-emerald-400">$1,000.00 USDT</span>
+                        <span id="delta-total-balance" class="text-xs font-bold font-mono tabular-nums text-emerald-400">$1,000.00 USDT</span>
                     </div>
 
                     <div class="h-44 w-full">
@@ -604,15 +611,15 @@
                     <div class="grid grid-cols-3 gap-2 text-center">
                         <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
                             <div class="text-[10px] text-slate-400 mono-font">AVAILABLE CASH</div>
-                            <div class="text-xs font-bold text-white mono-font" id="delta-avail-cash">$1,000.00</div>
+                            <div class="text-xs font-bold text-white mono-font tabular-nums" id="delta-avail-cash">$1,000.00</div>
                         </div>
                         <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
                             <div class="text-[10px] text-slate-400 mono-font">POSITION MARGIN</div>
-                            <div class="text-xs font-bold text-white mono-font" id="delta-pos-margin">$0.00</div>
+                            <div class="text-xs font-bold text-white mono-font tabular-nums" id="delta-pos-margin">$0.00</div>
                         </div>
                         <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
                             <div class="text-[10px] text-slate-400 mono-font">UNREALIZED PNL</div>
-                            <div class="text-xs font-bold text-emerald-400 mono-font" id="delta-unrealized-pnl">+$0.00</div>
+                            <div class="text-xs font-bold text-emerald-400 mono-font tabular-nums" id="delta-unrealized-pnl">+$0.00</div>
                         </div>
                     </div>
                     <div class="text-[11px] text-slate-400 italic truncate" id="delta-status-rationale">Delta Exchange Testnet API Connected // Real-time Margin Utilization: 0.0%</div>
@@ -658,7 +665,7 @@
             <!-- Tab Content 1: Live Open Positions Table -->
             <div id="tab-pane-positions" class="p-3">
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left text-xs font-mono">
+                    <table class="w-full text-left text-xs font-mono tabular-nums">
                         <thead class="bg-cyberdark text-slate-400 uppercase tracking-wider border-b border-cyberborder">
                             <tr>
                                 <th class="p-2.5">Asset</th>
@@ -690,9 +697,9 @@
                 </div>
             </div>
 
-            <!-- Tab Content 3: Whale Derivatives & Macro Sentiment -->
+            <!-- Tab Content 3: Whale Derivatives & Macro Sentiment (Enriched with Liquidations, Funding, F&G meter) -->
             <div id="tab-pane-whales" class="hidden p-3">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                     
                     <!-- Fear & Greed Card -->
                     <div class="bg-cyberdark p-3.5 rounded-lg border border-cyberborder space-y-2">
@@ -701,7 +708,7 @@
                             <span id="fg-class-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">NEUTRAL</span>
                         </div>
                         <div class="flex items-baseline space-x-2">
-                            <span id="fg-score-val" class="text-2xl font-extrabold font-mono text-white">50</span>
+                            <span id="fg-score-val" class="text-2xl font-extrabold font-mono tabular-nums text-white">50</span>
                             <span class="text-xs font-mono text-slate-500">/ 100</span>
                         </div>
                         <div class="text-[11px] text-slate-400" id="fg-advice-text">Market sentiment is balanced. Scanner filtering noisy moves.</div>
@@ -723,8 +730,18 @@
                             <span class="text-xs font-mono font-bold uppercase text-slate-300">WHALE DERIVATIVES FLOW</span>
                             <span id="whale-ratio-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">52% LONG</span>
                         </div>
-                        <div class="text-sm font-bold font-mono text-white" id="whale-sentiment-summary">TOP TRADER RATIO: 1.08</div>
+                        <div class="text-sm font-bold font-mono tabular-nums text-white" id="whale-sentiment-summary">TOP TRADER RATIO: 1.08</div>
                         <div class="text-[11px] text-slate-400" id="whale-detail-text">Futures Open Interest & Whale taker volume aligned with daily bias.</div>
+                    </div>
+
+                    <!-- Funding & Liquidations Summary Card -->
+                    <div class="bg-cyberdark p-3.5 rounded-lg border border-cyberborder space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-mono font-bold uppercase text-slate-300">FUNDING & LIQUIDATIONS</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">+0.0100% / 8h</span>
+                        </div>
+                        <div class="text-sm font-bold font-mono tabular-nums text-white">24h Liqs: $42.5M (68% Shorts)</div>
+                        <div class="text-[11px] text-slate-400">Predictive Cascade Sweep Guard armed for high-volatility sweeps.</div>
                     </div>
 
                 </div>
@@ -747,7 +764,7 @@
                     </div>
                 </div>
 
-                <div id="terminal-box" class="h-64 overflow-y-auto bg-cyberdark/95 p-3 rounded-lg font-mono text-xs text-slate-300 space-y-1 border border-cyberborder shadow-inner scanlines">
+                <div id="terminal-box" class="h-64 overflow-y-auto bg-cyberdark/95 p-3 rounded-lg font-mono text-xs text-slate-300 space-y-1 border border-cyberborder shadow-inner scanlines tabular-nums">
                     <div class="text-slate-500">[SYSTEM] Terminal initialized. Subscribing to live WebSocket telemetry stream...</div>
                 </div>
             </div>
@@ -796,12 +813,12 @@
                     <span class="text-slate-300">Switch to DOGEUSDT</span>
                 </div>
                 <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-amber-400 font-bold">Key 6</span>
+                    <span class="text-amber-300 font-bold">Key 6</span>
                     <span class="text-slate-300">Switch to XAUTUSDT (Gold)</span>
                 </div>
             </div>
             <div class="text-[11px] text-slate-400 text-center italic">
-                Note: Hotkeys are automatically disabled when typing in input fields.
+                Note: Hotkeys are automatically disabled when typing inside form inputs.
             </div>
             <button onclick="toggleHotkeysHelp()" class="w-full py-1.5 rounded-lg bg-cyberdark border border-cyberborder text-xs font-mono text-white hover:border-cyancyan">
                 CLOSE
@@ -827,9 +844,9 @@
         let deltaChartInstance = null;
         let tvWidget = null;
         let ws = null;
-        let lastPingTime = 0;
-        let orderbookInterval = null;
+        let lastPrices = {};
 
+        // Watchlist includes all 6 institutional symbols
         const WATCHLIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "XAUTUSDT"];
 
         // Toast Notification System
@@ -863,7 +880,10 @@
             if (!container) return;
             container.innerHTML = '';
 
-            const tvSymbol = "BINANCE:" + symbol;
+            let tvSymbol = "BINANCE:" + symbol;
+            if (symbol === "XAUTUSDT") {
+                tvSymbol = "TETHER:XAUTUSD";
+            }
             const tvInterval = interval === "1m" ? "1" : interval === "5m" ? "5" : interval === "15m" ? "15" : interval === "1h" ? "60" : interval === "4h" ? "240" : "15";
 
             try {
@@ -876,12 +896,12 @@
                         "theme": "dark",
                         "style": "1",
                         "locale": "en",
-                        "toolbar_bg": "#0e1420",
+                        "toolbar_bg": "#0c121e",
                         "enable_publishing": false,
                         "hide_side_toolbar": false,
                         "allow_symbol_change": true,
                         "container_id": "tradingview_main",
-                        "backgroundColor": "#080b11",
+                        "backgroundColor": "#080c14",
                         "gridColor": "rgba(255, 255, 255, 0.04)",
                         "studies": [
                             "RSI@tv-basicstudies",
@@ -940,7 +960,7 @@
             if (badge) badge.innerText = `ACTIVE: ${activeSymbol}`;
 
             const chartTitle = document.getElementById('chart-symbol-title');
-            if (chartTitle) chartTitle.innerText = `BINANCE:${activeSymbol}`;
+            if (chartTitle) chartTitle.innerText = activeSymbol === 'XAUTUSDT' ? 'TETHER:XAUTUSD' : `BINANCE:${activeSymbol}`;
 
             const obBadge = document.getElementById('orderbook-symbol-badge');
             if (obBadge) obBadge.innerText = activeSymbol;
@@ -962,7 +982,6 @@
                     const data = await res.json();
                     renderMarketSummary(data);
                 } else {
-                    // Fallback to Binance ticker if backend endpoint is initializing
                     fetchBinanceTickersFallback();
                 }
             } catch (err) {
@@ -977,7 +996,6 @@
             if (!data) return;
             const items = Array.isArray(data) ? data : (data.tickers || data.data || []);
             
-            // Map items if array or dictionary
             const map = {};
             if (Array.isArray(items)) {
                 items.forEach(it => { if (it.symbol) map[it.symbol] = it; });
@@ -989,6 +1007,7 @@
                 const info = map[sym];
                 if (!info) return;
 
+                const cardEl = document.getElementById(`ticker-card-${sym}`);
                 const priceEl = document.getElementById(`ticker-price-${sym}`);
                 const chgEl = document.getElementById(`ticker-chg-${sym}`);
                 const volEl = document.getElementById(`ticker-vol-${sym}`);
@@ -996,18 +1015,31 @@
                 const lEl = document.getElementById(`ticker-l-${sym}`);
 
                 const price = parseFloat(info.price || info.lastPrice || 0);
-                const chg = parseFloat(info.change_24h || info.priceChangePercent || 0);
-                const vol = parseFloat(info.volume || info.quoteVolume || 0);
+                const chg = parseFloat(info.change_24h_pct !== undefined ? info.change_24h_pct : (info.change_24h || info.priceChangePercent || 0));
+                const vol = parseFloat(info.quote_volume_24h || info.volume || info.quoteVolume || 0);
                 const high = parseFloat(info.high_24h || info.highPrice || 0);
                 const low = parseFloat(info.low_24h || info.lowPrice || 0);
 
                 if (priceEl && price > 0) {
+                    const prevPrice = lastPrices[sym];
+                    if (prevPrice !== undefined && cardEl) {
+                        if (price > prevPrice) {
+                            cardEl.classList.remove('flash-down');
+                            cardEl.classList.add('flash-up');
+                            setTimeout(() => cardEl.classList.remove('flash-up'), 700);
+                        } else if (price < prevPrice) {
+                            cardEl.classList.remove('flash-up');
+                            cardEl.classList.add('flash-down');
+                            setTimeout(() => cardEl.classList.remove('flash-down'), 700);
+                        }
+                    }
+                    lastPrices[sym] = price;
                     priceEl.innerText = price >= 1 ? `$${price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : `$${price.toFixed(4)}`;
                 }
                 if (chgEl) {
                     const isPos = chg >= 0;
                     chgEl.innerText = `${isPos ? '+' : ''}${chg.toFixed(2)}%`;
-                    chgEl.className = `text-xs font-bold font-mono ${isPos ? 'text-cyangreen' : 'text-cyanpink'}`;
+                    chgEl.className = `text-xs font-bold font-mono tabular-nums ${isPos ? 'text-cyangreen' : 'text-cyanpink'}`;
                 }
                 if (volEl && vol > 0) {
                     volEl.innerText = vol >= 1e9 ? `Vol $${(vol/1e9).toFixed(2)}B` : `Vol $${(vol/1e6).toFixed(1)}M`;
@@ -1019,13 +1051,13 @@
 
         async function fetchBinanceTickersFallback() {
             try {
-                const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(WATCHLIST)}`);
+                const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(WATCHLIST.slice(0, 5))}`);
                 if (res.ok) {
                     const list = await res.json();
                     renderMarketSummary(list);
                 }
             } catch (e) {
-                // Ignore network glitch
+                // Ignore fallback network error
             }
         }
 
@@ -1055,7 +1087,6 @@
             const bids = data.bids || [];
             const asks = data.asks || [];
 
-            // Calculate max volume for relative depth bars
             let maxVol = 0.001;
             bids.slice(0, 8).forEach(b => {
                 const sz = parseFloat(Array.isArray(b) ? b[1] : b.qty || 0);
@@ -1066,7 +1097,7 @@
                 if (sz > maxVol) maxVol = sz;
             });
 
-            // Render Asks (Asks displayed descending or bottom closest to mid)
+            // Render Asks
             let asksHtml = '';
             const sliceAsks = asks.slice(0, 8).reverse();
             sliceAsks.forEach(a => {
@@ -1076,7 +1107,7 @@
                 const pct = Math.min(100, Math.round((q / maxVol) * 100));
 
                 asksHtml += `
-                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-cyberdark transition cursor-pointer" onclick="setLimitPrice(${p})">
+                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-cybercardalt transition cursor-pointer" onclick="setLimitPrice(${p})">
                     <div class="absolute inset-y-0 right-0 depth-bar-ask" style="width: ${pct}%"></div>
                     <span class="relative z-10 font-semibold text-cyanpink">${p >= 1 ? p.toFixed(2) : p.toFixed(4)}</span>
                     <span class="relative z-10 text-right text-slate-300">${q >= 100 ? q.toFixed(1) : q.toFixed(3)}</span>
@@ -1095,7 +1126,7 @@
                 const pct = Math.min(100, Math.round((q / maxVol) * 100));
 
                 bidsHtml += `
-                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-cyberdark transition cursor-pointer" onclick="setLimitPrice(${p})">
+                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-cybercardalt transition cursor-pointer" onclick="setLimitPrice(${p})">
                     <div class="absolute inset-y-0 right-0 depth-bar-bid" style="width: ${pct}%"></div>
                     <span class="relative z-10 font-semibold text-cyangreen">${p >= 1 ? p.toFixed(2) : p.toFixed(4)}</span>
                     <span class="relative z-10 text-right text-slate-300">${q >= 100 ? q.toFixed(1) : q.toFixed(3)}</span>
@@ -1115,9 +1146,8 @@
         }
 
         function renderSyntheticOrderBook() {
-            // Realistic fallback orderbook based on current ticker price
             const priceEl = document.getElementById(`ticker-price-${activeSymbol}`);
-            let basePrice = 91420.0;
+            let basePrice = 91250.0;
             if (priceEl) {
                 const p = parseFloat(priceEl.innerText.replace(/[^0-9.]/g, ''));
                 if (!isNaN(p) && p > 0) basePrice = p;
@@ -1177,7 +1207,6 @@
                 lBtn.className = 'px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan font-bold border border-cyan-500/30 text-[11px]';
                 mBtn.className = 'px-2 py-0.5 rounded bg-cyberdark text-slate-400 border border-cyberborder text-[11px]';
                 lGroup.classList.remove('hidden');
-                // Pre-fill current price
                 const mid = document.getElementById('orderbook-mid-price');
                 if (mid) {
                     const p = parseFloat(mid.innerText.replace(/[^0-9.]/g, ''));
@@ -1231,6 +1260,7 @@
                 side: currentOrderSide,
                 order_type: currentOrderType,
                 price: limitPrice,
+                limit_price: limitPrice,
                 size_usd: sizeUsd,
                 leverage: leverage,
                 stop_loss: sl,
@@ -1323,7 +1353,6 @@
 
         // --- Global Hotkeys Listener ---
         window.addEventListener('keydown', (e) => {
-            // Ignore if user is currently typing in an input or textarea
             const tag = (document.activeElement && document.activeElement.tagName) ? document.activeElement.tagName.toUpperCase() : '';
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
                 return;
@@ -1384,8 +1413,8 @@
                     datasets: [{
                         label: 'Realized Cumulative PnL ($)',
                         data: [0],
-                        borderColor: '#00e5ff',
-                        backgroundColor: 'rgba(0, 229, 255, 0.08)',
+                        borderColor: '#00f0ff',
+                        backgroundColor: 'rgba(0, 240, 255, 0.08)',
                         fill: true,
                         tension: 0.3,
                         borderWidth: 2,
@@ -1420,8 +1449,8 @@
                         {
                             label: 'Total Equity ($)',
                             data: [1000.0],
-                            borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                            borderColor: '#00e676',
+                            backgroundColor: 'rgba(0, 230, 118, 0.08)',
                             fill: true,
                             tension: 0.3,
                             borderWidth: 2,
@@ -1431,7 +1460,7 @@
                         {
                             label: 'Available Cash ($)',
                             data: [1000.0],
-                            borderColor: '#06b6d4',
+                            borderColor: '#00f0ff',
                             borderDash: [3, 3],
                             fill: false,
                             tension: 0.3,
@@ -1610,12 +1639,12 @@
                 const stage = p.stage || 'OPEN';
 
                 html += `
-                <tr class="hover:bg-cyberdark/50 transition">
+                <tr class="hover:bg-cybercardalt transition">
                     <td class="p-2.5 font-bold text-white">${p.symbol}</td>
                     <td class="p-2.5"><span class="px-2 py-0.5 rounded border text-[11px] ${sideColor}">${p.direction}</span></td>
-                    <td class="p-2.5 text-slate-300">$${entry}</td>
-                    <td class="p-2.5 text-slate-300">$${sl}</td>
-                    <td class="p-2.5 text-cyancyan">$${tp}</td>
+                    <td class="p-2.5 text-slate-300 tabular-nums">$${entry}</td>
+                    <td class="p-2.5 text-slate-300 tabular-nums">$${sl}</td>
+                    <td class="p-2.5 text-cyancyan tabular-nums">$${tp}</td>
                     <td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">${stage}</span></td>
                     <td class="p-2.5 text-right">
                         <button onclick="closeEarly('${p.trade_id}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 text-[11px] transition">
@@ -1651,7 +1680,7 @@
                 <div class="flex items-center justify-between p-2.5 bg-cyberdark rounded-xl border border-cyberborder">
                     <div>
                         <div class="font-bold text-white text-xs">${p.symbol} <span class="${sideColor}">[${p.direction} ${p.timeframe || ''}]</span></div>
-                        <div class="text-[10px] text-slate-400">Entry: $${p.entry_price} | SL: $${p.stop_loss} | Grade: <span class="text-cyancyan font-bold">${p.ai_grade || 'A'}</span></div>
+                        <div class="text-[10px] text-slate-400 tabular-nums">Entry: $${p.entry_price} | SL: $${p.stop_loss} | Grade: <span class="text-cyancyan font-bold">${p.ai_grade || 'A'}</span></div>
                     </div>
                     <div class="flex items-center space-x-1.5">
                         <button onclick="approveTrade('${tid}')" class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/40 text-xs font-bold transition">🟢 APPROVE</button>
@@ -1698,7 +1727,7 @@
             const box = document.getElementById('terminal-box');
             if (!box) return;
             const line = document.createElement('div');
-            line.className = 'leading-relaxed hover:bg-white/5 px-1 rounded';
+            line.className = 'leading-relaxed hover:bg-white/5 px-1 rounded tabular-nums';
 
             let lvlColor = 'text-slate-400';
             if (item.level === 'WARNING') lvlColor = 'text-cyanyellow font-semibold';
@@ -1762,7 +1791,7 @@
                     if (upnlEl) {
                         const upnl = parseFloat(data.unrealized_pnl || 0);
                         upnlEl.innerText = `${upnl >= 0 ? '+' : ''}$${upnl.toFixed(2)}`;
-                        upnlEl.className = `text-xs font-bold mono-font ${upnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+                        upnlEl.className = `text-xs font-bold mono-font tabular-nums ${upnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
                     }
 
                     const ratEl = document.getElementById('delta-status-rationale');
@@ -1869,7 +1898,7 @@
                     equityChartInstance.data.datasets[0].data = dataPoints;
                     equityChartInstance.update();
                     document.getElementById('chart-net-pnl').innerText = `${cum >= 0 ? '+' : ''}$${cum.toFixed(2)}`;
-                    document.getElementById('chart-net-pnl').className = `text-xs font-bold font-mono ${cum >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+                    document.getElementById('chart-net-pnl').className = `text-xs font-bold font-mono tabular-nums ${cum >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
                 }
             } catch (e) {
                 console.error('Fetch latest data error', e);
