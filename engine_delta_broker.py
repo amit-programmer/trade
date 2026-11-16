@@ -854,25 +854,76 @@ class DeltaTestnetBroker:
         stop_loss = float(trade_setup.get("stop_loss", 0.0))
         take_profit = float(trade_setup.get("tp1", trade_setup.get("target_price", 0.0)))
 
-        # Pre-Trade Margin Check (Spam & liquidation guard)
+        # Pre-Trade Margin Check (Dynamic Auto-Downscaling & Liquidation Guard)
         entry_ref = float(trade_setup.get("entry_price", 0.0))
         contract_spec = DEFAULT_CONTRACT_SPECS.get(symbol.upper(), 1.0)
         notional = (size * contract_spec) * entry_ref if entry_ref > 0 else float(trade_setup.get("max_loss_usd", 20.0))
-        est_margin_required = max(10.0, notional / 10.0)
+        est_margin_required = max(1.0, notional / 10.0)
 
         margin_check = self.check_available_margin(required_margin=est_margin_required)
+        avail_margin = float(margin_check.get("available_margin") or 0.0)
+
+        auto_downscaled = False
+        downscale_info = ""
+
         if not margin_check.get("sufficient", True):
-            log.warning(
-                "Delta order BLOCKED due to insufficient margin: Available $%s < Required $%s",
-                margin_check.get("available_margin"), est_margin_required
-            )
-            return {
-                "status": "BLOCKED",
-                "reason": "INSUFFICIENT_MARGIN",
-                "detail": margin_check.get("detail", f"Available USDT balance below required ${est_margin_required:,.2f}"),
-                "available_margin": margin_check.get("available_margin", 0.0),
-                "required_margin": est_margin_required,
-            }
+            if avail_margin >= 3.0:
+                # User has real balance on Delta, but requested position size is too large.
+                # Auto-downscale size so trade executes cleanly within safe margin limits (75% buffer).
+                safe_margin = max(3.0, avail_margin * 0.75)
+                max_notional = safe_margin * 10.0  # 10x leverage
+                unit_notional = (contract_spec * entry_ref) if entry_ref > 0 else 1.0
+                downscaled_contracts = int(max_notional / unit_notional)
+                new_size = max(1, min(size, downscaled_contracts))
+
+                if new_size < size:
+                    old_size = size
+                    size = new_size
+                    new_coin_qty = round(size * contract_spec, 4)
+                    trade_setup["quantity"] = new_coin_qty
+                    trade_setup["remaining_qty"] = new_coin_qty
+                    notional = (size * contract_spec) * entry_ref
+                    est_margin_required = max(1.0, notional / 10.0)
+                    auto_downscaled = True
+                    downscale_info = (
+                        f"Auto-downscaled from {old_size} to {size} lots "
+                        f"({new_coin_qty:g} {symbol.replace('USDT', '')}, Margin: ${est_margin_required:.2f}) "
+                        f"to fit available balance (${avail_margin:.2f})"
+                    )
+                    log.info("[DeltaBroker] Margin Auto-Downscale: %s", downscale_info)
+
+                    # Keep Paper Broker in sync with actual downscaled size
+                    trade_id = trade_setup.get("id") or trade_setup.get("trade_id")
+                    if trade_id:
+                        try:
+                            from engine_paper_broker import PAPER_BROKER
+                            PAPER_BROKER.update_quantity_with_downscale(trade_id, new_coin_qty)
+                        except Exception as p_exc:
+                            log.debug("Paper broker downscale sync skipped: %s", p_exc)
+                else:
+                    log.warning(
+                        "Delta order BLOCKED: Minimum 1 contract requires $%s > Available $%s",
+                        est_margin_required, avail_margin
+                    )
+                    return {
+                        "status": "BLOCKED",
+                        "reason": "INSUFFICIENT_MARGIN",
+                        "detail": f"Available Balance: ${avail_margin:,.2f} < Min Required: ${est_margin_required:,.2f}",
+                        "available_margin": avail_margin,
+                        "required_margin": est_margin_required,
+                    }
+            else:
+                log.warning(
+                    "Delta order BLOCKED due to insufficient margin: Available $%s < Required $%s",
+                    avail_margin, est_margin_required
+                )
+                return {
+                    "status": "BLOCKED",
+                    "reason": "INSUFFICIENT_MARGIN",
+                    "detail": margin_check.get("detail", f"Available USD balance (${avail_margin:,.2f}) below required ${est_margin_required:,.2f}"),
+                    "available_margin": avail_margin,
+                    "required_margin": est_margin_required,
+                }
 
         # 1. Place Market Entry Order
         order_res = self.place_order(
@@ -884,6 +935,18 @@ class DeltaTestnetBroker:
 
         order_data = order_res.get("result", {}) if isinstance(order_res, dict) else {}
         order_id = order_data.get("id")
+
+        if not order_res.get("success") or not order_id:
+            err_msg = order_res.get("error") or order_res.get("message") or str(order_res)
+            log.error("Delta market order placement failed: %s", err_msg)
+            return {
+                "status": "FAILED",
+                "reason": "ORDER_REJECTED",
+                "detail": f"Delta Exchange rejected order: {err_msg}",
+                "symbol": symbol,
+                "size": size,
+                "order_response": order_res,
+            }
 
         # Slippage Guard: Extract actual fill price from order response or query order status
         actual_fill = None
@@ -954,6 +1017,8 @@ class DeltaTestnetBroker:
             "product_id": self.get_product_id(symbol),
             "size": size,
             "side": side,
+            "auto_downscaled": auto_downscaled,
+            "downscale_info": downscale_info if auto_downscaled else None,
             "planned_entry": planned_entry,
             "actual_fill_price": actual_fill,
             "slippage_usd": slippage_usd,

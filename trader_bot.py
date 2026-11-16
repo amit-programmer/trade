@@ -3872,7 +3872,9 @@ def telegram_listener_loop(client: BinanceClient, sheets: Optional[SheetsLogger]
                                 pid = delta_res.get("product_id")
                                 c_size = delta_res.get("size", trade.get("quantity"))
                                 fill_str = f" @ `${delta_res.get('actual_fill_price'):,.4f}`" if delta_res.get("actual_fill_price") else ""
-                                delta_lines.append(f"• ⚡ *Delta Testnet Order:* Placed (ID: `{oid}` | {c_size} Lots{fill_str} | Prod: `{pid}`)")
+                                delta_lines.append(f"• ⚡ *Delta Exchange Order:* Placed (ID: `{oid}` | {c_size} Lots{fill_str} | Prod: `{pid}`)")
+                                if delta_res.get("auto_downscaled"):
+                                    delta_lines.append(f"• 📉 *Auto-Downscaled:* `{delta_res.get('downscale_info')}`")
                                 if delta_res.get("slippage_usd") and abs(delta_res.get("slippage_usd", 0)) > 1e-4:
                                     delta_lines.append(f"• 🔍 *Slippage Guard:* Real Fill synced `${trade['entry_price']:,.4f}` (Shift: `{delta_res.get('slippage_usd'):+.2f}` USD)")
                                 if delta_res.get("stop_loss_response"):

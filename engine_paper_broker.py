@@ -377,6 +377,32 @@ class PaperBroker:
                      trade_id, actual_fill_price, old_entry, pos["tp1"], pos["tp2"])
             return pos
 
+    def update_quantity_with_downscale(self, trade_id: str, new_quantity: float) -> Optional[Dict[str, Any]]:
+        """
+        Margin Guard: Updates trade quantity and recalculates risk/loss USD
+        when exchange margin auto-downscaling reduces the position size.
+        """
+        new_quantity = float(new_quantity)
+        with _LOCK:
+            self._reload()
+            pos = self.state.get("open", {}).get(trade_id)
+            if not pos:
+                pos = self.state.get("pending", {}).get(trade_id)
+            if not pos:
+                return None
+
+            old_qty = float(pos.get("quantity", new_quantity))
+            pos["quantity"] = new_quantity
+            pos["remaining_qty"] = new_quantity
+            entry = float(pos.get("entry_price", 0.0))
+            sl = float(pos.get("initial_stop_loss", pos.get("stop_loss", 0.0)))
+            if entry > 0 and sl > 0:
+                pos["max_loss_usd"] = round(abs(entry - sl) * new_quantity, 2)
+            self._save()
+            log.info("Margin Guard: Trade %s quantity downscaled from %s to %s (max_loss_usd: $%s)",
+                     trade_id, old_qty, new_quantity, pos.get("max_loss_usd"))
+            return pos
+
     def close_position_early(self, trade_id: str, exit_price: float, reason: str = "AI_EARLY_EXIT") -> Optional[Dict[str, Any]]:
         """
         Closes an open position immediately at exit_price (e.g. on AI regime shift or manual UI tap).

@@ -111,6 +111,16 @@ class RiskBudgetManager:
         effective_loss_usd = round(self.max_loss_usd * max(0.1, min(1.0, float(risk_multiplier))), 2)
         quantity = effective_loss_usd / risk_per_unit
         total_trade_capital = quantity * entry
+
+        # Capital Purchasing Power Cap:
+        # Prevents micro-stop loss setups from generating huge notionals that exchange margin rejects.
+        # Max notional per trade = account_balance * max_leverage_multiplier (default: 5.0x account balance)
+        max_notional_cap = self.account_balance * float(os.getenv("MAX_POSITION_LEVERAGE_NOTIONAL", "5.0"))
+        if max_notional_cap > 0 and total_trade_capital > max_notional_cap:
+            quantity = max_notional_cap / entry
+            total_trade_capital = max_notional_cap
+            effective_loss_usd = round(quantity * risk_per_unit, 2)
+
         risk_reward_ratio = round(reward_per_unit / risk_per_unit, 2)
 
         # Risk validation rules
