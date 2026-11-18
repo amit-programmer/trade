@@ -178,6 +178,7 @@ _client = BinanceClient()
 
 
 @app.get("/health")
+@app.get("/healthz")
 def health_check() -> Dict[str, Any]:
     return {
         "status": "healthy",
@@ -206,12 +207,15 @@ def get_status() -> Dict[str, Any]:
 
 @app.get("/api/paper")
 def get_paper_trades() -> Dict[str, Any]:
-    positions = PAPER_BROKER.get_open_positions()
+    paper_positions = PAPER_BROKER.get_open_positions()
+    delta_positions = DELTA_BROKER.get_formatted_open_positions()
     summary = PAPER_BROKER.get_summary_text()
     history = PAPER_BROKER.get_closed_positions()
     pending = PAPER_BROKER.pending_approvals
     return {
-        "open_positions": positions,
+        "open_positions": paper_positions,
+        "delta_positions": delta_positions,
+        "all_open_positions": delta_positions + paper_positions,
         "closed_positions_count": len(history),
         "closed_positions": history[-20:],
         "summary_text": summary,
@@ -346,6 +350,33 @@ def get_delta_wallet() -> Dict[str, Any]:
 
     summary["history"] = list(DELTA_BALANCE_HISTORY)
     return summary
+
+
+@app.get("/api/delta/positions")
+def get_delta_positions() -> Dict[str, Any]:
+    """Returns live open perpetual positions from Delta Exchange."""
+    positions = DELTA_BROKER.get_formatted_open_positions()
+    return {
+        "status": "success",
+        "enabled": DELTA_BROKER.enabled,
+        "count": len(positions),
+        "positions": positions,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.post("/api/delta/close/{symbol}")
+def close_delta_position(symbol: str) -> Dict[str, Any]:
+    """Closes live open position on Delta Exchange."""
+    res = DELTA_BROKER.close_position_on_exchange(symbol)
+    if telegram_configured():
+        send_telegram(
+            f"🛑 *Delta Live Position Closed via Dashboard!*\n\n"
+            f"• Asset: *{symbol}*\n"
+            f"• Result: `{res.get('status', 'CLOSED')}`",
+            parse_mode="Markdown",
+        )
+    return res
 
 
 # --- Institutional Market Summary, Order Book L2 & Manual Fast Order Desk ---
@@ -998,11 +1029,15 @@ async def websocket_terminal(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         # Initial snapshot on connection
+        paper_pos = PAPER_BROKER.get_open_positions()
+        delta_pos = DELTA_BROKER.get_formatted_open_positions()
         snapshot = {
             "type": "SNAPSHOT",
             "execution_mode": get_execution_mode(),
             "scanning_active": SCANNING_ACTIVE.is_set(),
-            "open_positions": PAPER_BROKER.get_open_positions(),
+            "open_positions": paper_pos,
+            "delta_positions": delta_pos,
+            "all_open_positions": delta_pos + paper_pos,
             "pending_approvals": PAPER_BROKER.pending_approvals,
             "closed_count": len(PAPER_BROKER.get_closed_positions()),
             "logs": list(TERMINAL_LOGS)[-50:],
@@ -1023,10 +1058,14 @@ async def websocket_terminal(websocket: WebSocket):
                     new_m = set_execution_mode("AUTONOMOUS" if curr == "HUMAN" else "HUMAN")
                     await manager.broadcast({"type": "MODE_CHANGE", "execution_mode": new_m})
                 elif msg.get("action") == "REFRESH":
+                    r_paper_pos = PAPER_BROKER.get_open_positions()
+                    r_delta_pos = DELTA_BROKER.get_formatted_open_positions()
                     await websocket.send_json({
                         "type": "REFRESH",
                         "agents": get_micro_agents_status(),
-                        "open_positions": PAPER_BROKER.get_open_positions(),
+                        "open_positions": r_paper_pos,
+                        "delta_positions": r_delta_pos,
+                        "all_open_positions": r_delta_pos + r_paper_pos,
                         "pending_approvals": PAPER_BROKER.pending_approvals,
                         "logs": list(TERMINAL_LOGS)[-20:],
                         "market_summary": get_market_summary_data(),
@@ -1438,9 +1477,10 @@ if __name__ == "__main__":
     import sys
     import uvicorn
 
+    default_port = int(os.getenv("PORT", "8000"))
     parser = argparse.ArgumentParser(description="FastAPI Web Dashboard & REST Server")
     parser.add_argument("--host", default="0.0.0.0", help="Host IP to bind to (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind to (default: 8000)")
+    parser.add_argument("--port", type=int, default=default_port, help="Port to bind to (default: 8000 or $PORT)")
     parser.add_argument("--with-bot", "--all", "-a", dest="with_bot", action="store_true", help="Start trader_bot.py in parallel alongside dashboard server")
     parser.add_argument("--reload", action="store_true", default=False, help="Enable uvicorn reloader")
     args, unknown = parser.parse_known_args()

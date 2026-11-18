@@ -664,22 +664,43 @@
 
             <!-- Tab Content 1: Live Open Positions Table -->
             <div id="tab-pane-positions" class="p-3">
+                <!-- Positions Segmented Source Filter & Status Bar -->
+                <div class="flex items-center justify-between pb-2 mb-2 border-b border-cyberborder flex-wrap gap-2">
+                    <div class="flex items-center space-x-1.5 bg-cyberdark p-1 rounded-lg border border-cyberborder">
+                        <button id="pos-filter-all" onclick="setPosFilter('ALL')" class="px-2.5 py-1 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyancyan border border-cyan-500/40 transition">
+                            ALL POSITIONS (<span id="count-pos-all">0</span>)
+                        </button>
+                        <button id="pos-filter-delta" onclick="setPosFilter('DELTA')" class="px-2.5 py-1 rounded text-xs font-mono font-bold text-slate-400 hover:text-white border border-transparent transition">
+                            ⚡ DELTA EXCHANGE LIVE (<span id="count-pos-delta">0</span>)
+                        </button>
+                        <button id="pos-filter-paper" onclick="setPosFilter('PAPER')" class="px-2.5 py-1 rounded text-xs font-mono font-bold text-slate-400 hover:text-white border border-transparent transition">
+                            📑 PAPER VIRTUAL (<span id="count-pos-paper">0</span>)
+                        </button>
+                    </div>
+                    <div class="flex items-center space-x-2 text-[10px] font-mono text-slate-400">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span id="pos-source-indicator">DELTA EXCHANGE SYNC ACTIVE</span>
+                    </div>
+                </div>
+
                 <div class="overflow-x-auto">
                     <table class="w-full text-left text-xs font-mono tabular-nums">
                         <thead class="bg-cyberdark text-slate-400 uppercase tracking-wider border-b border-cyberborder">
                             <tr>
                                 <th class="p-2.5">Asset</th>
+                                <th class="p-2.5">Broker / Source</th>
                                 <th class="p-2.5">Side</th>
+                                <th class="p-2.5">Size / Lots</th>
                                 <th class="p-2.5">Entry Price</th>
-                                <th class="p-2.5">Stop / BE</th>
-                                <th class="p-2.5">Target TP</th>
+                                <th class="p-2.5">Mark / Current</th>
+                                <th class="p-2.5">Unrealized PnL</th>
                                 <th class="p-2.5">Stage</th>
                                 <th class="p-2.5 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="open-positions-tbody" class="divide-y divide-cyberborder">
                             <tr>
-                                <td colspan="7" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
+                                <td colspan="9" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1327,8 +1348,9 @@
                 const res = await fetch('/api/paper');
                 const data = await res.json();
                 const openPos = data.open_positions || [];
+                const deltaPos = data.delta_positions || [];
 
-                if (openPos.length === 0) {
+                if (openPos.length === 0 && deltaPos.length === 0) {
                     showToast("No active positions to flatten.", "info");
                     return;
                 }
@@ -1336,7 +1358,10 @@
                 for (const pos of openPos) {
                     await fetch(`/api/paper/close/${pos.trade_id}`, { method: 'POST' });
                 }
-                showToast(`Flattened ${openPos.length} position(s) successfully!`, "success");
+                for (const dpos of deltaPos) {
+                    await fetch(`/api/delta/close/${dpos.symbol}`, { method: 'POST' });
+                }
+                showToast(`Flattened ${openPos.length + deltaPos.length} position(s) successfully!`, "success");
                 fetchLatestData();
             } catch (err) {
                 console.error("Emergency Flatten Error", err);
@@ -1618,42 +1643,124 @@
             if (agents.equity) document.getElementById('agent-equity-detail').innerText = agents.equity.detail;
         }
 
-        // --- Render Open Positions Table ---
-        function renderOpenPositions(positions) {
-            const tbody = document.getElementById('open-positions-tbody');
-            const countBadge = document.getElementById('dock-pos-count');
-            countBadge.innerText = `${(positions || []).length}`;
+        // --- Open Positions State & Filter ---
+        window._currentPaperPositions = [];
+        window._currentDeltaPositions = [];
+        window._currentPosFilter = 'ALL';
 
-            if (!positions || positions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td></tr>';
+        function setPosFilter(filter) {
+            window._currentPosFilter = filter;
+            ['all', 'delta', 'paper'].forEach(f => {
+                const btn = document.getElementById(`pos-filter-${f}`);
+                if (!btn) return;
+                if (f.toUpperCase() === filter) {
+                    btn.className = 'px-2.5 py-1 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyancyan border border-cyan-500/40 transition';
+                } else {
+                    btn.className = 'px-2.5 py-1 rounded text-xs font-mono font-bold bg-transparent text-slate-400 hover:text-white border border-transparent transition';
+                }
+            });
+            renderPositionsFiltered();
+        }
+
+        function renderOpenPositions(paperPositions, deltaPositions) {
+            if (Array.isArray(paperPositions)) window._currentPaperPositions = paperPositions;
+            if (Array.isArray(deltaPositions)) window._currentDeltaPositions = deltaPositions;
+
+            const countAll = (window._currentPaperPositions || []).length + (window._currentDeltaPositions || []).length;
+            const countDelta = (window._currentDeltaPositions || []).length;
+            const countPaper = (window._currentPaperPositions || []).length;
+
+            const badgeAll = document.getElementById('count-pos-all');
+            const badgeDelta = document.getElementById('count-pos-delta');
+            const badgePaper = document.getElementById('count-pos-paper');
+            const countBadge = document.getElementById('dock-pos-count');
+
+            if (badgeAll) badgeAll.innerText = `${countAll}`;
+            if (badgeDelta) badgeDelta.innerText = `${countDelta}`;
+            if (badgePaper) badgePaper.innerText = `${countPaper}`;
+            if (countBadge) countBadge.innerText = `${countAll}`;
+
+            renderPositionsFiltered();
+        }
+
+        function renderPositionsFiltered() {
+            const tbody = document.getElementById('open-positions-tbody');
+            if (!tbody) return;
+
+            let list = [];
+            const filter = window._currentPosFilter || 'ALL';
+
+            if (filter === 'ALL') {
+                list = [...(window._currentDeltaPositions || []), ...(window._currentPaperPositions || [])];
+            } else if (filter === 'DELTA') {
+                list = [...(window._currentDeltaPositions || [])];
+            } else if (filter === 'PAPER') {
+                list = [...(window._currentPaperPositions || [])];
+            }
+
+            if (!list || list.length === 0) {
+                const filterDesc = filter === 'DELTA' ? 'Delta Exchange Live' : (filter === 'PAPER' ? 'Paper Virtual' : 'live or paper');
+                tbody.innerHTML = `<tr><td colspan="9" class="text-center p-6 text-slate-500">No active ${filterDesc} open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td></tr>`;
                 return;
             }
 
             let html = '';
-            positions.forEach(p => {
+            list.forEach(p => {
+                const isDelta = Boolean(p.is_delta_live || p.source === 'DELTA');
                 const isLong = (p.direction || '').toUpperCase() === 'LONG';
                 const sideColor = isLong ? 'text-cyangreen bg-emerald-500/10 border-emerald-500/30' : 'text-cyanpink bg-rose-500/10 border-rose-500/30';
+                
                 const entry = parseFloat(p.entry_price || 0).toFixed(4);
-                const sl = parseFloat(p.stop_loss || 0).toFixed(4);
-                const tp = parseFloat(p.tp1 || 0).toFixed(4);
-                const stage = p.stage || 'OPEN';
+                const mark = parseFloat(p.current_price || p.entry_price || 0).toFixed(4);
+                const upnl = parseFloat(p.unrealized_pnl_usd !== undefined ? p.unrealized_pnl_usd : (p.current_pnl_usd || 0));
+                const pnlSign = upnl >= 0 ? '+' : '';
+                const pnlClass = upnl >= 0 ? 'text-cyangreen font-bold' : 'text-cyanpink font-bold';
+                const pnlPct = p.pnl_pct !== undefined ? `(${pnlSign}${p.pnl_pct}%)` : (p.current_r !== undefined ? `(${pnlSign}${p.current_r}R)` : '');
+                
+                const sizeStr = p.quantity_str || (p.quantity ? `${p.quantity}` : '1 lot');
+                const stage = p.stage || (isDelta ? 'EXCHANGE_LIVE' : 'OPEN');
+
+                const sourceBadge = isDelta
+                    ? '<span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold tracking-wider">⚡ DELTA LIVE</span>'
+                    : '<span class="px-1.5 py-0.5 rounded bg-cyan-500/10 text-slate-400 border border-cyan-500/20 text-[10px]">📑 PAPER</span>';
+
+                const actionBtn = isDelta
+                    ? `<button onclick="closeDeltaPosition('${p.symbol}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 text-[11px] font-bold transition flex items-center space-x-1 ml-auto"><span>🛑</span><span>CLOSE LIVE</span></button>`
+                    : `<button onclick="closeEarly('${p.trade_id}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 text-[11px] transition ml-auto">🛑 CLOSE</button>`;
 
                 html += `
                 <tr class="hover:bg-cybercardalt transition">
                     <td class="p-2.5 font-bold text-white">${p.symbol}</td>
+                    <td class="p-2.5">${sourceBadge}</td>
                     <td class="p-2.5"><span class="px-2 py-0.5 rounded border text-[11px] ${sideColor}">${p.direction}</span></td>
+                    <td class="p-2.5 text-slate-300 tabular-nums">${sizeStr}</td>
                     <td class="p-2.5 text-slate-300 tabular-nums">$${entry}</td>
-                    <td class="p-2.5 text-slate-300 tabular-nums">$${sl}</td>
-                    <td class="p-2.5 text-cyancyan tabular-nums">$${tp}</td>
+                    <td class="p-2.5 text-slate-200 font-bold tabular-nums">$${mark}</td>
+                    <td class="p-2.5 tabular-nums ${pnlClass}">${pnlSign}$${upnl.toFixed(2)} <span class="text-[10px] font-normal text-slate-400">${pnlPct}</span></td>
                     <td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">${stage}</span></td>
                     <td class="p-2.5 text-right">
-                        <button onclick="closeEarly('${p.trade_id}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 text-[11px] transition">
-                            🛑 CLOSE
-                        </button>
+                        ${actionBtn}
                     </td>
                 </tr>`;
             });
             tbody.innerHTML = html;
+        }
+
+        async function closeDeltaPosition(symbol) {
+            if (!confirm(`⚠️ EMERGENCY CLOSE: Flatten live perpetual position for ${symbol} on Delta Exchange?`)) return;
+            try {
+                showToast(`Submitting market close for ${symbol} on Delta Exchange...`, "info");
+                const res = await fetch(`/api/delta/close/${symbol}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'CLOSED_ON_EXCHANGE' || data.status === 'FLAT' || data.success) {
+                    showToast(`Delta position for ${symbol} closed successfully!`, "success");
+                } else {
+                    showToast(`Delta close: ${data.detail || data.status}`, "warning");
+                }
+                fetchLatestData();
+            } catch (e) {
+                showToast(`Error closing Delta position: ${e}`, "error");
+            }
         }
 
         // --- Render Pending Approvals ---

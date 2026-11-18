@@ -10,3 +10,5 @@ cloudinary>=1.46.0
 matplotlib>=3.7.0
 fastapi>=0.100.0
 uvicorn>=0.22.0
+websockets>=11.0
+python-multipart>=0.0.6

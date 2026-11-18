@@ -89,6 +89,7 @@ class DeltaTestnetBroker:
 
         self.base_url = raw_url
         self._product_cache: Dict[str, int] = dict(DEFAULT_PRODUCT_MAP)
+        self._positions_cache: Dict[str, Any] = {"timestamp": 0.0, "data": []}
         self._time_offset: int = 0  # Seconds to add to local time to align with Delta server clock
         self._last_request_time: float = 0.0
         self.session = requests.Session()
@@ -467,9 +468,26 @@ class DeltaTestnetBroker:
 
                 # If exchange returned an error response
                 if isinstance(bal_res, dict) and not bal_res.get("success", False):
-                    err = bal_res.get("error") or bal_res.get("message") or "Authentication or IP rejected"
-                    if isinstance(err, dict):
-                        err = err.get("code") or err.get("message") or str(err)
+                    err_obj = bal_res.get("error") or bal_res.get("message") or "Authentication or IP rejected"
+                    err_code = ""
+                    client_ip = ""
+                    if isinstance(err_obj, dict):
+                        err_code = str(err_obj.get("code") or "")
+                        ctx = err_obj.get("context", {})
+                        if isinstance(ctx, dict):
+                            client_ip = str(ctx.get("client_ip") or "")
+                        err_str = err_code or err_obj.get("message") or str(err_obj)
+                    else:
+                        err_str = str(err_obj)
+
+                    if err_code == "ip_not_whitelisted_for_api_key" or "ip_not_whitelisted" in err_str:
+                        ip_info = f" (Your IP: {client_ip})" if client_ip else ""
+                        detail_msg = f"⚠️ Delta IP Error: Current IP{ip_info} is not whitelisted. In Delta Exchange API Settings, add this IP or leave the IP whitelist blank."
+                    elif err_code == "invalid_api_key":
+                        detail_msg = f"⚠️ Delta Auth Error: Invalid API Key / Secret for {self.base_url}. Please generate and paste fresh API keys in .env."
+                    else:
+                        detail_msg = f"⚠️ Delta Exchange API Error: '{err_str}' // Check API credentials or BASE_URL ({self.base_url})"
+
                     return {
                         "success": False,
                         "mode": "DELTA AUTH ERROR",
@@ -481,7 +499,8 @@ class DeltaTestnetBroker:
                         "unrealized_pnl": 0.0,
                         "margin_utilization_pct": 0.0,
                         "leverage": 10,
-                        "detail": f"⚠️ Delta Exchange API Error: '{err}' // Check DELTA_API_KEY, SECRET, BASE_URL or IP Whitelist",
+                        "client_ip": client_ip,
+                        "detail": detail_msg,
                     }
             except Exception as exc:
                 log.warning("Delta get_financial_summary failed, falling back to simulated ledger: %s", exc)
@@ -540,6 +559,83 @@ class DeltaTestnetBroker:
         if isinstance(res2, dict) and res2.get("success"):
             return res2.get("result", [])
         return []
+
+    def get_formatted_open_positions(self) -> List[Dict[str, Any]]:
+        """
+        Returns normalized live open positions from Delta Exchange with 2s non-blocking cache.
+        Filters out flat (size==0) records and formats for the dashboard UI.
+        """
+        if not self.enabled or not self.api_key or not self.api_secret:
+            return []
+
+        now = time.time()
+        if hasattr(self, "_positions_cache") and (now - self._positions_cache.get("timestamp", 0.0) < 2.0):
+            return list(self._positions_cache.get("data", []))
+
+        try:
+            raw_list = self.get_open_positions_from_exchange()
+            formatted = []
+            rev_map = {pid: sym for sym, pid in self._product_cache.items()}
+
+            for p in raw_list:
+                if not isinstance(p, dict):
+                    continue
+                raw_size = p.get("size", 0)
+                try:
+                    size_int = int(raw_size)
+                except (ValueError, TypeError):
+                    size_int = 0
+                if size_int == 0:
+                    continue
+
+                pid = p.get("product_id")
+                prod_info = p.get("product", {}) if isinstance(p.get("product"), dict) else {}
+                sym = prod_info.get("symbol") or p.get("product_symbol") or rev_map.get(pid) or f"PID_{pid}"
+                if not sym.endswith("USDT") and not sym.endswith("USD"):
+                    sym = f"{sym}USD"
+
+                is_long = size_int > 0
+                direction = "LONG" if is_long else "SHORT"
+                contracts = abs(size_int)
+
+                spec = DEFAULT_CONTRACT_SPECS.get(sym.upper(), DEFAULT_CONTRACT_SPECS.get(sym.upper().replace("USD", "USDT"), 1.0))
+                coin_qty = round(contracts * spec, 4)
+
+                entry_p = float(p.get("entry_price") or p.get("avg_entry_price") or 0.0)
+                mark_p = float(p.get("mark_price") or p.get("close_price") or entry_p)
+                upnl = float(p.get("unrealized_pnl") or 0.0)
+                margin = float(p.get("margin") or p.get("position_margin") or 0.0)
+                liq_p = float(p.get("liquidation_price") or 0.0)
+
+                pnl_pct = round((upnl / margin * 100.0), 2) if margin > 0 else 0.0
+
+                formatted.append({
+                    "source": "DELTA",
+                    "trade_id": f"delta_{pid}_{contracts}",
+                    "product_id": pid,
+                    "symbol": sym,
+                    "direction": direction,
+                    "contracts": contracts,
+                    "quantity": coin_qty,
+                    "quantity_str": f"{coin_qty:g} ({contracts} lots)",
+                    "entry_price": entry_p,
+                    "current_price": mark_p,
+                    "stop_loss": 0.0,
+                    "tp1": 0.0,
+                    "stage": "EXCHANGE_LIVE",
+                    "unrealized_pnl_usd": upnl,
+                    "current_pnl_usd": upnl,
+                    "pnl_pct": pnl_pct,
+                    "position_margin_usd": margin,
+                    "liquidation_price": liq_p,
+                    "is_delta_live": True,
+                })
+
+            self._positions_cache = {"timestamp": now, "data": formatted}
+            return formatted
+        except Exception as exc:
+            log.warning("Delta get_formatted_open_positions exception: %s", exc)
+            return self._positions_cache.get("data", []) if hasattr(self, "_positions_cache") else []
 
     def reconcile_state_on_startup(self, paper_broker: Any) -> Dict[str, Any]:
         """

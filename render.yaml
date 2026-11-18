@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: crypto-trading-terminal
+    env: python
+    runtime: python-3.11.9
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py --all
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: RUN_BOT_WITH_SERVER
+        value: "true"
+      - key: PORT
+        value: "10000"
+      - key: ACCOUNT_BALANCE
+        value: "200.0"
+      - key: MAX_LOSS_PER_TRADE_USD
+        value: "10.0"
+      - key: MAX_DAILY_LOSS_USD
+        value: "30.0"
+      - key: MAX_POSITION_LEVERAGE_NOTIONAL
+        value: "5.0"
+      - key: TIMEZONE
+        value: "UTC"
+      - key: SYMBOLS
+        value: "ETHUSDT,SOLUSDT,XRPUSDT,BTCUSDT,DOGEUSDT,PAXGUSDT,XAUTUSDT"
+      - key: TIMEFRAME
+        value: "15m, 5m, 1h, 4h, 1m"
+      - key: SCAN_INTERVAL_SECONDS
+        value: "60"
+      - key: LOG_EVERY_CYCLE
+        value: "true"
+      - key: DELTA_TESTNET_ENABLED
+        sync: false
+      - key: DELTA_BASE_URL
+        sync: false
+      - key: DELTA_API_KEY
+        sync: false
+      - key: DELTA_API_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+      - key: GOOGLE_SHEET_NAME
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

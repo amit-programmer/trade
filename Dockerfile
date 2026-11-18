@@ -32,14 +32,18 @@ RUN useradd -m -u 1001 botuser && \
     chmod 666 /app/trader_bot.log /app/bot_state.json /app/heartbeat.json /app/paper_positions.json /app/crash_dump.json && \
     chown -R botuser:botuser /app
 
-# Copy application code and modular engines
+# Copy application code, modular engines and dashboard templates
 COPY *.py /app/
+COPY templates /app/templates
 
 # Switch to non-root user
 USER botuser
 
-# Docker Healthcheck instruction for autonomous auto-restart
-HEALTHCHECK --interval=60s --timeout=10s --retries=3 CMD python trader_bot.py --health || exit 1
+# Expose Web Dashboard Port
+EXPOSE 8000
 
-# Default command
-CMD ["python", "trader_bot.py"]
+# Docker Healthcheck instruction for autonomous auto-restart
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 CMD curl -f http://localhost:8000/health || python trader_bot.py --health || exit 1
+
+# Default command (starts Web Dashboard + 24/7 Scanner in parallel)
+CMD ["python", "server.py", "--all"]
