@@ -32,6 +32,7 @@ import signal
 import sys
 import threading
 import time
+import urllib.request
 
 # Windows console UTF-8 resilience
 if sys.platform == "win32":
@@ -5279,6 +5280,58 @@ def paper_position_tracker_loop(client: BinanceClient, state: dict) -> None:
         STOP.wait(sleep_time)
 
 
+def keep_alive_pinger_loop() -> None:
+    """
+    Automatic 24/7 Keep-Alive Daemon:
+    Periodically sends lightweight GET requests to Render / Cloud Proxy or Web Dashboard
+    every 5 minutes (default 300s) to keep cloud free-tier instances permanently awake.
+    Configurable via KEEP_ALIVE_URL in .env, or auto-detects Render's native RENDER_EXTERNAL_URL.
+    """
+    raw_urls = os.getenv("KEEP_ALIVE_URL", "").strip()
+    render_ext = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+
+    urls_to_ping: list[str] = []
+    if raw_urls:
+        urls_to_ping.extend([u.strip() for u in raw_urls.split(",") if u.strip()])
+    elif render_ext:
+        urls_to_ping.append(f"{render_ext.rstrip('/')}/health")
+
+    if not urls_to_ping:
+        log.debug("[KeepAlive] No KEEP_ALIVE_URL or RENDER_EXTERNAL_URL configured. Keep-alive daemon sleeping.")
+        return
+
+    interval = 300  # Default: 5 minutes (300 seconds)
+    try:
+        interval = max(60, int(os.getenv("KEEP_ALIVE_INTERVAL_SECONDS", "300")))
+    except Exception:
+        interval = 300
+
+    log.info("[KeepAlive] 24/7 Service Keep-Alive active! Target(s): %s (Interval: %ss)", urls_to_ping, interval)
+
+    # Initial brief warm-up delay (15s) so servers finish booting before receiving pings
+    if STOP.wait(15.0):
+        return
+
+    while not STOP.is_set():
+        for target_url in urls_to_ping:
+            try:
+                req_url = target_url
+                if not req_url.startswith("http://") and not req_url.startswith("https://"):
+                    req_url = f"https://{req_url}"
+                req = urllib.request.Request(
+                    req_url,
+                    headers={"User-Agent": "TradeBot-KeepAlive/2.0 (+https://github.com/amit-programmer/trade)"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    code = getattr(resp, "status", 200)
+                log.info("[KeepAlive] Pinged %s -> HTTP %s (Service kept awake)", req_url, code)
+            except Exception as p_err:
+                log.debug("[KeepAlive] Ping to %s: %s", target_url, p_err)
+
+        if STOP.wait(float(interval)):
+            break
+
+
 def main() -> int:
     global SHEETS_ON
     parser = argparse.ArgumentParser(description="Liquidity sweep + OB retest alert bot")
@@ -5343,7 +5396,16 @@ def main() -> int:
         )
         t_pos_tracker.start()
 
+        # Keep-Alive Pinger Thread (Keeps Render free tier & proxies awake 24/7)
+        t_keep_alive = threading.Thread(
+            target=keep_alive_pinger_loop,
+            name="KeepAlivePinger",
+            daemon=True,
+        )
+        t_keep_alive.start()
+
     scanner_cb = NetworkCircuitBreaker(name="ScannerMain")
+    last_keep_alive_ping = 0.0
     while not STOP.is_set():                       # 24/7 loop
         if not SCANNING_ACTIVE.is_set():
             # Analysis is paused by user ('end' command)
@@ -5358,6 +5420,22 @@ def main() -> int:
         except Exception as sc_err:                    # absolute safety net: never crash
             scanner_cb.record_failure(sc_err)
             log.exception("Unhandled error in scan cycle - continuing")
+
+        # Fallback inline Keep-Alive Ping check every ~5 minutes (300s)
+        now_ts = time.time()
+        if (now_ts - last_keep_alive_ping) >= 300.0:
+            last_keep_alive_ping = now_ts
+            k_url = os.getenv("KEEP_ALIVE_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+            if k_url:
+                try:
+                    p_target = k_url.split(",")[0].strip()
+                    if not p_target.startswith("http"):
+                        p_target = f"https://{p_target}"
+                    if not p_target.endswith("/health") and not p_target.endswith("/healthz"):
+                        p_target = f"{p_target.rstrip('/')}/health"
+                    urllib.request.urlopen(p_target, timeout=10)
+                except Exception:
+                    pass
         if args.once:
             break
         # Interruptible equivalent of time.sleep(SCAN_INTERVAL) with circuit breaker backoff
