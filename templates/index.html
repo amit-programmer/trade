@@ -1,497 +1,532 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QUANTUM SMC PRO // INSTITUTIONAL TRADING TERMINAL</title>
+    <title>SMC Quantitative Terminal // Institutional Execution Platform</title>
+
+    <!-- Google Fonts: Inter for UI typography, JetBrains Mono for financial tickers & numbers -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- TradingView Widget Script -->
-    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <script>
         tailwind.config = {
+            darkMode: 'class',
             theme: {
                 extend: {
-                    colors: {
-                        cyberdark: '#080c14',
-                        cybercard: '#0c121e',
-                        cybercardalt: '#111a2c',
-                        cyberborder: '#172338',
-                        cyancyan: '#00f0ff',
-                        cyangreen: '#00e676',
-                        cyanpink: '#ff1744',
-                        cyanpurple: '#b388ff',
-                        cyanyellow: '#ffb300',
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'SF Mono', 'Fira Code', 'monospace'],
                     },
-                    boxShadow: {
-                        'neon-green': '0 0 16px rgba(0, 230, 118, 0.35)',
-                        'neon-cyan': '0 0 16px rgba(0, 240, 255, 0.35)',
-                        'neon-pink': '0 0 16px rgba(255, 23, 68, 0.35)',
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                        },
+                        trade: {
+                            buy: '#10b981',
+                            buyBg: 'rgba(16, 185, 129, 0.12)',
+                            buyBorder: 'rgba(16, 185, 129, 0.3)',
+                            sell: '#f43f5e',
+                            sellBg: 'rgba(244, 63, 94, 0.12)',
+                            sellBorder: 'rgba(244, 63, 94, 0.3)',
+                        }
                     }
                 }
             }
         }
     </script>
+
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- TradingView Widget Script -->
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Rajdhani:wght@500;600;700&display=swap');
-        body {
-            font-family: 'Rajdhani', sans-serif;
-            background-color: #080c14;
-            color: #e2e8f0;
+        /* Smooth color transitions for theme toggling */
+        * {
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
         }
-        .mono-font {
+
+        body {
+            font-family: 'Inter', sans-serif;
+            text-rendering: optimizeLegibility;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono-num {
             font-family: 'JetBrains Mono', monospace;
             font-variant-numeric: tabular-nums;
         }
-        .tabular-nums {
-            font-variant-numeric: tabular-nums;
-        }
-        .scanlines {
-            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 255, 0, 0.02));
-            background-size: 100% 3px, 6px 100%;
-        }
-        .glow-border {
-            border: 1px solid #172338;
-            transition: all 0.2s ease;
-        }
-        .glow-border:hover {
-            border-color: #00f0ff;
-            box-shadow: 0 0 16px rgba(0, 240, 255, 0.16);
-        }
-        /* Custom scrollbar */
+
+        /* Clean, refined custom scrollbars */
         ::-webkit-scrollbar {
-            width: 5px;
-            height: 5px;
+            width: 6px;
+            height: 6px;
         }
         ::-webkit-scrollbar-track {
-            background: #080c14;
+            background: transparent;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        .dark ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
         }
         ::-webkit-scrollbar-thumb {
-            background: #172338;
-            border-radius: 3px;
+            background: #cbd5e1;
+            border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: #00f0ff;
+            background: #94a3b8;
         }
-        /* Price update flash animations */
+
+        /* Order book depth bars */
+        .depth-bar-bid {
+            background: linear-gradient(to left, rgba(16, 185, 129, 0.18), transparent);
+        }
+        .depth-bar-ask {
+            background: linear-gradient(to left, rgba(244, 63, 94, 0.18), transparent);
+        }
+
+        /* Active Ticker Card Highlight */
+        .dark .ticker-card-active {
+            border-color: #3b82f6 !important;
+            background: rgba(59, 130, 246, 0.08) !important;
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
+        }
+        .ticker-card-active {
+            border-color: #2563eb !important;
+            background: #eff6ff !important;
+            box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+        }
+
+        /* Active Tab Highlight */
+        .dock-tab-active {
+            color: #3b82f6 !important;
+            border-bottom: 2px solid #3b82f6 !important;
+            background: rgba(59, 130, 246, 0.06);
+        }
+        .dark .dock-tab-active {
+            color: #60a5fa !important;
+            border-bottom: 2px solid #3b82f6 !important;
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        /* Subtle Price Flash Micro-animations */
         @keyframes flash-green {
-            0% { background-color: rgba(0, 230, 118, 0.35); }
+            0% { background-color: rgba(16, 185, 129, 0.25); }
             100% { background-color: transparent; }
         }
         @keyframes flash-red {
-            0% { background-color: rgba(255, 23, 68, 0.35); }
+            0% { background-color: rgba(244, 63, 94, 0.25); }
             100% { background-color: transparent; }
         }
-        .flash-up {
-            animation: flash-green 0.7s ease-out;
-        }
-        .flash-down {
-            animation: flash-red 0.7s ease-out;
-        }
-        /* Orderbook Depth Bar */
-        .depth-bar-bid {
-            background: linear-gradient(to left, rgba(0, 230, 118, 0.22), transparent);
-        }
-        .depth-bar-ask {
-            background: linear-gradient(to left, rgba(255, 23, 68, 0.22), transparent);
-        }
-        /* Active Ticker Card Highlight */
-        .ticker-card-active {
-            border-color: #00f0ff !important;
-            box-shadow: 0 0 14px rgba(0, 240, 255, 0.32) !important;
-            background: linear-gradient(180deg, #131d2f 0%, #0c121e 100%) !important;
-        }
-        /* Tab Button Active */
-        .dock-tab-active {
-            border-bottom: 2px solid #00f0ff !important;
-            color: #00f0ff !important;
-            background-color: rgba(0, 240, 255, 0.08);
-        }
+        .flash-up { animation: flash-green 0.7s ease-out; }
+        .flash-down { animation: flash-red 0.7s ease-out; }
     </style>
 </head>
-<body class="min-h-screen bg-cyberdark text-slate-200 antialiased selection:bg-cyancyan selection:text-black">
+<body class="bg-slate-50 text-slate-800 dark:bg-[#0a0e17] dark:text-slate-100 min-h-screen selection:bg-blue-500 selection:text-white">
 
     <!-- Toast Notification Container -->
-    <div id="toast-container" class="fixed top-16 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+    <div id="toast-container" class="fixed top-16 right-4 sm:right-6 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
-    <!-- Top Master Control Bar -->
-    <header class="border-b border-cyberborder bg-cybercard/95 backdrop-blur sticky top-0 z-40 px-3 py-2.5">
+    <!-- Header Navigation & Master Telemetry Bar -->
+    <header class="sticky top-0 z-40 bg-white/90 dark:bg-[#0f1422]/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800/80 px-4 py-2.5">
         <div class="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
             
-            <!-- Brand & Telemetry Status -->
+            <!-- Left: Platform Brand & Telemetry Status -->
             <div class="flex items-center space-x-3">
-                <div class="h-9 w-9 rounded-lg bg-cyberdark border border-cyancyan flex items-center justify-center shadow-neon-cyan">
-                    <span class="text-cyancyan font-extrabold text-xl">⚡</span>
+                <div class="h-9 w-9 rounded-lg bg-blue-600 dark:bg-blue-600/20 text-white dark:text-blue-400 border border-blue-500/30 flex items-center justify-center shadow-sm">
+                    <i data-lucide="activity" class="w-5 h-5"></i>
                 </div>
                 <div>
                     <div class="flex items-center space-x-2">
-                        <h1 class="text-lg font-extrabold tracking-wider uppercase text-white font-mono">QUANTUM SMC PRO</h1>
-                        <span id="ws-badge" class="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-400 border border-slate-700">CONNECTING...</span>
-                        <span id="latency-badge" class="px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">⚡ 12ms</span>
+                        <span class="text-sm sm:text-base font-bold tracking-tight text-slate-900 dark:text-white">QUANTUM SMC</span>
+                        <span class="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">PRO v2.0</span>
+                        <span id="ws-badge" class="px-2 py-0.5 text-[10px] font-mono rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">CONNECTING...</span>
+                        <span id="latency-badge" class="hidden sm:inline-flex px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">12ms</span>
                     </div>
-                    <p class="text-[11px] text-slate-400 mono-font">Institutional L2 Order Book & AI Dual-Mode Execution Terminal</p>
+                    <p class="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">Institutional Order Book & Multi-Broker Autonomous Execution Platform</p>
                 </div>
             </div>
 
-            <!-- Master Mode Toggle & Controls -->
-            <div class="flex items-center flex-wrap gap-2.5">
-                <div class="flex items-center bg-cyberdark border border-cyberborder rounded-xl p-1 shadow-inner">
-                    <span class="text-[11px] font-mono uppercase text-slate-400 px-2">Master Mode:</span>
-                    <button id="mode-btn" onclick="toggleMode()" class="px-3 py-1 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-300 flex items-center space-x-1.5 bg-amber-500/10 text-amber-400 border border-amber-500/40 hover:bg-amber-500/20">
-                        <span id="mode-icon">👤</span>
+            <!-- Right: Execution Mode, Scanner Toggle, Emergency Controls & Theme Switcher -->
+            <div class="flex items-center flex-wrap gap-2">
+
+                <!-- Mode Switcher (Human vs Autonomous) -->
+                <div class="flex items-center bg-slate-100 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-lg p-0.5">
+                    <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400 px-2 hidden md:inline">Mode:</span>
+                    <button id="mode-btn" onclick="toggleMode()" class="px-2.5 py-1 rounded-md text-xs font-semibold font-mono tracking-wide transition flex items-center space-x-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20">
+                        <i id="mode-icon-svg" data-lucide="user-check" class="w-3.5 h-3.5"></i>
+                        <span id="mode-icon" class="hidden">👤</span>
                         <span id="mode-text">HUMAN (CLICK FOR FULL AI)</span>
                     </button>
                 </div>
 
-                <div class="flex items-center space-x-2">
-                    <button id="scan-toggle-btn" onclick="toggleScan()" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 flex items-center space-x-1.5">
-                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                        <span id="scan-btn-label">🟢 SCANNING</span>
-                    </button>
-                    
-                    <button onclick="emergencyFlatten()" class="px-2.5 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 flex items-center space-x-1" title="Shortcut: Press 'F' key">
-                        <span>🛑</span>
-                        <span>[F] FLATTEN ALL</span>
-                    </button>
+                <!-- Scanner Active State -->
+                <button id="scan-toggle-btn" onclick="toggleScan()" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono tracking-wide transition bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 flex items-center space-x-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span id="scan-btn-label">SCANNING</span>
+                </button>
 
-                    <a id="sheet-link-btn" href="#" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-cyan-500/10 text-cyancyan border border-cyan-500/30 hover:bg-cyan-500/20 flex items-center space-x-1">
-                        <span>📊</span>
-                        <span>SHEETS</span>
-                    </a>
+                <!-- Emergency Flatten All Button -->
+                <button onclick="emergencyFlatten()" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono tracking-wide transition bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20 flex items-center space-x-1" title="Shortcut: Press 'F' key to flatten all positions">
+                    <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                    <span>[F] FLATTEN ALL</span>
+                </button>
 
-                    <button onclick="toggleHotkeysHelp()" class="px-2 py-1.5 rounded-lg text-xs font-mono bg-cyberdark border border-cyberborder text-slate-400 hover:text-white transition" title="Show Hotkeys Guide">
-                        ⌨️
-                    </button>
-                </div>
+                <!-- Google Sheets Link -->
+                <a id="sheet-link-btn" href="#" target="_blank" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono transition bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center space-x-1">
+                    <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                    <span class="hidden sm:inline">SHEETS</span>
+                </a>
+
+                <!-- Hotkeys Guide Modal Toggle -->
+                <button onclick="toggleHotkeysHelp()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition" title="Keyboard Shortcuts Guide">
+                    <i data-lucide="keyboard" class="w-4 h-4"></i>
+                </button>
+
+                <!-- Modern Dark / Light Mode Toggle Button -->
+                <button id="theme-toggle-btn" onclick="toggleTheme()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition" title="Toggle Light / Dark Mode">
+                    <i id="theme-icon-dark" data-lucide="moon" class="w-4 h-4 hidden dark:inline"></i>
+                    <i id="theme-icon-light" data-lucide="sun" class="w-4 h-4 inline dark:hidden"></i>
+                </button>
             </div>
         </div>
     </header>
 
-    <main class="max-w-[1920px] mx-auto px-3 py-3 space-y-3">
+    <main class="max-w-[1920px] mx-auto px-3 sm:px-4 py-3 space-y-3">
 
         <!-- 1. Top Market Watch / Ticker Carousel Bar (6 Pairs: BTC, ETH, SOL, XRP, DOGE, XAUT Gold) -->
-        <section class="bg-cybercard rounded-xl p-2.5 border border-cyberborder">
-            <div class="flex items-center justify-between mb-2 px-1">
+        <section class="bg-white dark:bg-[#0f1422] rounded-xl p-3 border border-slate-200 dark:border-slate-800/80 shadow-sm">
+            <div class="flex items-center justify-between mb-2.5 px-0.5">
                 <div class="flex items-center space-x-2">
-                    <span class="text-xs font-bold font-mono uppercase tracking-widest text-slate-400 flex items-center space-x-1.5">
-                        <span class="w-1.5 h-1.5 rounded-full bg-cyancyan animate-pulse"></span>
-                        <span>INSTITUTIONAL MARKET WATCH (HOTKEYS [1]-[6])</span>
+                    <span class="text-xs font-semibold tracking-wider uppercase text-slate-500 dark:text-slate-400 flex items-center space-x-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                        <span>MARKET WATCH (HOTKEYS [1]-[6])</span>
                     </span>
-                    <span class="text-[10px] font-mono text-slate-500">// 1-CLICK ACTIVE SWITCH</span>
+                    <span class="text-[11px] font-mono text-slate-400 hidden sm:inline">// 1-CLICK PAIR SWITCH</span>
                 </div>
-                <div class="text-[11px] font-mono text-slate-400 flex items-center space-x-2">
-                    <span id="active-symbol-badge" class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan font-bold">ACTIVE: BTCUSDT</span>
-                    <span id="market-last-updated" class="text-slate-500">REFRESH: 0s</span>
+                <div class="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center space-x-2">
+                    <span id="active-symbol-badge" class="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 font-bold border border-blue-200 dark:border-blue-500/20">ACTIVE: BTCUSDT</span>
+                    <span id="market-last-updated" class="hidden sm:inline">SYNC: 0s</span>
                 </div>
             </div>
 
-            <!-- Ticker Cards Grid (6 Watchlist Symbols) -->
+            <!-- Ticker Cards Grid (Responsive 2 to 6 columns) -->
             <div id="ticker-carousel-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                 <!-- BTC Card -->
-                <div id="ticker-card-BTCUSDT" onclick="switchActiveSymbol('BTCUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all ticker-card-active">
+                <div id="ticker-card-BTCUSDT" onclick="switchActiveSymbol('BTCUSDT')" class="cursor-pointer bg-slate-50 dark:bg-[#131929] p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 transition-all ticker-card-active">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[1]</span>
-                            <span class="font-bold text-white text-xs font-mono">BTC/USDT</span>
+                            <span class="text-[10px] font-mono font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 rounded">[1]</span>
+                            <span class="font-bold text-xs font-mono text-slate-900 dark:text-white">BTC/USDT</span>
                         </div>
-                        <span id="ticker-chg-BTCUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+2.45%</span>
+                        <span id="ticker-chg-BTCUSDT" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">+2.45%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-BTCUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$91,250.00</span>
-                        <span id="ticker-vol-BTCUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $2.58B</span>
+                        <span id="ticker-price-BTCUSDT" class="text-sm font-extrabold font-mono mono-num text-slate-900 dark:text-white">$91,250.00</span>
+                        <span id="ticker-vol-BTCUSDT" class="text-[10px] font-mono mono-num text-slate-500">Vol $2.58B</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
-                        <span>H: <span id="ticker-h-BTCUSDT" class="text-slate-300">$92,400</span></span>
-                        <span>L: <span id="ticker-l-BTCUSDT" class="text-slate-300">$89,150</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">
+                        <span>H: <span id="ticker-h-BTCUSDT" class="text-slate-700 dark:text-slate-300">$92,400</span></span>
+                        <span>L: <span id="ticker-l-BTCUSDT" class="text-slate-700 dark:text-slate-300">$89,150</span></span>
                     </div>
                 </div>
 
                 <!-- ETH Card -->
-                <div id="ticker-card-ETHUSDT" onclick="switchActiveSymbol('ETHUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all">
+                <div id="ticker-card-ETHUSDT" onclick="switchActiveSymbol('ETHUSDT')" class="cursor-pointer bg-slate-50 dark:bg-[#131929] p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[2]</span>
-                            <span class="font-bold text-white text-xs font-mono">ETH/USDT</span>
+                            <span class="text-[10px] font-mono font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 rounded">[2]</span>
+                            <span class="font-bold text-xs font-mono text-slate-900 dark:text-white">ETH/USDT</span>
                         </div>
-                        <span id="ticker-chg-ETHUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+3.12%</span>
+                        <span id="ticker-chg-ETHUSDT" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">+3.12%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-ETHUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$3,140.50</span>
-                        <span id="ticker-vol-ETHUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $568M</span>
+                        <span id="ticker-price-ETHUSDT" class="text-sm font-extrabold font-mono mono-num text-slate-900 dark:text-white">$3,140.50</span>
+                        <span id="ticker-vol-ETHUSDT" class="text-[10px] font-mono mono-num text-slate-500">Vol $568M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
-                        <span>H: <span id="ticker-h-ETHUSDT" class="text-slate-300">$3,195</span></span>
-                        <span>L: <span id="ticker-l-ETHUSDT" class="text-slate-300">$3,020</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">
+                        <span>H: <span id="ticker-h-ETHUSDT" class="text-slate-700 dark:text-slate-300">$3,195</span></span>
+                        <span>L: <span id="ticker-l-ETHUSDT" class="text-slate-700 dark:text-slate-300">$3,020</span></span>
                     </div>
                 </div>
 
                 <!-- SOL Card -->
-                <div id="ticker-card-SOLUSDT" onclick="switchActiveSymbol('SOLUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all">
+                <div id="ticker-card-SOLUSDT" onclick="switchActiveSymbol('SOLUSDT')" class="cursor-pointer bg-slate-50 dark:bg-[#131929] p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[3]</span>
-                            <span class="font-bold text-white text-xs font-mono">SOL/USDT</span>
+                            <span class="text-[10px] font-mono font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 rounded">[3]</span>
+                            <span class="font-bold text-xs font-mono text-slate-900 dark:text-white">SOL/USDT</span>
                         </div>
-                        <span id="ticker-chg-SOLUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+5.80%</span>
+                        <span id="ticker-chg-SOLUSDT" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">+5.80%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-SOLUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$218.40</span>
-                        <span id="ticker-vol-SOLUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $96.5M</span>
+                        <span id="ticker-price-SOLUSDT" class="text-sm font-extrabold font-mono mono-num text-slate-900 dark:text-white">$218.40</span>
+                        <span id="ticker-vol-SOLUSDT" class="text-[10px] font-mono mono-num text-slate-500">Vol $96.5M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
-                        <span>H: <span id="ticker-h-SOLUSDT" class="text-slate-300">$224.5</span></span>
-                        <span>L: <span id="ticker-l-SOLUSDT" class="text-slate-300">$204.0</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">
+                        <span>H: <span id="ticker-h-SOLUSDT" class="text-slate-700 dark:text-slate-300">$224.5</span></span>
+                        <span>L: <span id="ticker-l-SOLUSDT" class="text-slate-700 dark:text-slate-300">$204.0</span></span>
                     </div>
                 </div>
 
                 <!-- XRP Card -->
-                <div id="ticker-card-XRPUSDT" onclick="switchActiveSymbol('XRPUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all">
+                <div id="ticker-card-XRPUSDT" onclick="switchActiveSymbol('XRPUSDT')" class="cursor-pointer bg-slate-50 dark:bg-[#131929] p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[4]</span>
-                            <span class="font-bold text-white text-xs font-mono">XRP/USDT</span>
+                            <span class="text-[10px] font-mono font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 rounded">[4]</span>
+                            <span class="font-bold text-xs font-mono text-slate-900 dark:text-white">XRP/USDT</span>
                         </div>
-                        <span id="ticker-chg-XRPUSDT" class="text-xs font-bold font-mono tabular-nums text-cyanpink">-1.25%</span>
+                        <span id="ticker-chg-XRPUSDT" class="text-xs font-bold font-mono mono-num text-rose-600 dark:text-rose-400">-1.25%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-XRPUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$1.1450</span>
-                        <span id="ticker-vol-XRPUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $97.8M</span>
+                        <span id="ticker-price-XRPUSDT" class="text-sm font-extrabold font-mono mono-num text-slate-900 dark:text-white">$1.1450</span>
+                        <span id="ticker-vol-XRPUSDT" class="text-[10px] font-mono mono-num text-slate-500">Vol $97.8M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
-                        <span>H: <span id="ticker-h-XRPUSDT" class="text-slate-300">$1.210</span></span>
-                        <span>L: <span id="ticker-l-XRPUSDT" class="text-slate-300">$1.095</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">
+                        <span>H: <span id="ticker-h-XRPUSDT" class="text-slate-700 dark:text-slate-300">$1.210</span></span>
+                        <span>L: <span id="ticker-l-XRPUSDT" class="text-slate-700 dark:text-slate-300">$1.095</span></span>
                     </div>
                 </div>
 
                 <!-- DOGE Card -->
-                <div id="ticker-card-DOGEUSDT" onclick="switchActiveSymbol('DOGEUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all">
+                <div id="ticker-card-DOGEUSDT" onclick="switchActiveSymbol('DOGEUSDT')" class="cursor-pointer bg-slate-50 dark:bg-[#131929] p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-slate-800 text-slate-300 px-1 rounded">[5]</span>
-                            <span class="font-bold text-white text-xs font-mono">DOGE/USDT</span>
+                            <span class="text-[10px] font-mono font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1 rounded">[5]</span>
+                            <span class="font-bold text-xs font-mono text-slate-900 dark:text-white">DOGE/USDT</span>
                         </div>
-                        <span id="ticker-chg-DOGEUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+8.40%</span>
+                        <span id="ticker-chg-DOGEUSDT" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">+8.40%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-DOGEUSDT" class="text-sm font-extrabold font-mono tabular-nums text-white">$0.3845</span>
-                        <span id="ticker-vol-DOGEUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $158M</span>
+                        <span id="ticker-price-DOGEUSDT" class="text-sm font-extrabold font-mono mono-num text-slate-900 dark:text-white">$0.3845</span>
+                        <span id="ticker-vol-DOGEUSDT" class="text-[10px] font-mono mono-num text-slate-500">Vol $158M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
-                        <span>H: <span id="ticker-h-DOGEUSDT" class="text-slate-300">$0.412</span></span>
-                        <span>L: <span id="ticker-l-DOGEUSDT" class="text-slate-300">$0.352</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">
+                        <span>H: <span id="ticker-h-DOGEUSDT" class="text-slate-700 dark:text-slate-300">$0.412</span></span>
+                        <span>L: <span id="ticker-l-DOGEUSDT" class="text-slate-700 dark:text-slate-300">$0.352</span></span>
                     </div>
                 </div>
 
                 <!-- XAUT Card (Tether Gold) -->
-                <div id="ticker-card-XAUTUSDT" onclick="switchActiveSymbol('XAUTUSDT')" class="cursor-pointer bg-cyberdark p-2.5 rounded-lg border border-cyberborder hover:border-cyancyan transition-all">
+                <div id="ticker-card-XAUTUSDT" onclick="switchActiveSymbol('XAUTUSDT')" class="cursor-pointer bg-slate-50 dark:bg-[#131929] p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 transition-all">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-1">
-                            <span class="text-[10px] font-mono bg-amber-500/20 text-amber-300 px-1 rounded font-bold">[6]</span>
-                            <span class="font-bold text-white text-xs font-mono">XAUT/USDT</span>
+                            <span class="text-[10px] font-mono font-bold bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1 rounded">[6]</span>
+                            <span class="font-bold text-xs font-mono text-slate-900 dark:text-white">XAUT/USDT</span>
                         </div>
-                        <span id="ticker-chg-XAUTUSDT" class="text-xs font-bold font-mono tabular-nums text-cyangreen">+0.45%</span>
+                        <span id="ticker-chg-XAUTUSDT" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">+0.45%</span>
                     </div>
                     <div class="mt-1 flex items-baseline justify-between">
-                        <span id="ticker-price-XAUTUSDT" class="text-sm font-extrabold font-mono tabular-nums text-amber-300">$2,648.50</span>
-                        <span id="ticker-vol-XAUTUSDT" class="text-[10px] font-mono tabular-nums text-slate-500">Vol $48.9M</span>
+                        <span id="ticker-price-XAUTUSDT" class="text-sm font-extrabold font-mono mono-num text-amber-600 dark:text-amber-400">$2,648.50</span>
+                        <span id="ticker-vol-XAUTUSDT" class="text-[10px] font-mono mono-num text-slate-500">Vol $48.9M</span>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
-                        <span>H: <span id="ticker-h-XAUTUSDT" class="text-slate-300">$2,665</span></span>
-                        <span>L: <span id="ticker-l-XAUTUSDT" class="text-slate-300">$2,635</span></span>
+                    <div class="mt-1 flex items-center justify-between text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">
+                        <span>H: <span id="ticker-h-XAUTUSDT" class="text-slate-700 dark:text-slate-300">$2,665</span></span>
+                        <span>L: <span id="ticker-l-XAUTUSDT" class="text-slate-700 dark:text-slate-300">$2,635</span></span>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- 2. Micro-Agents 6-Grid Status Panel -->
-        <section>
-            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-                <!-- Agent 1: Scanner -->
-                <div class="bg-cybercard p-2.5 rounded-xl glow-border">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] font-mono font-semibold text-slate-400">01. SCANNER</span>
-                        <span id="agent-scanner-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">ACTIVE</span>
-                    </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-scanner-detail">6 Pairs | 15m/5m/1h</div>
-                    <div class="text-[10px] text-slate-500 mt-0.5">Binance 24/7 SMC Stream</div>
+        <!-- 2. Micro-Agents Autonomous Pipeline (6-Grid Status Panel) -->
+        <section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+            <!-- Agent 1: Scanner -->
+            <div class="bg-white dark:bg-[#0f1422] p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">01. SCANNER</span>
+                    <span id="agent-scanner-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">ACTIVE</span>
                 </div>
+                <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200 truncate" id="agent-scanner-detail">6 Pairs | 15m/5m/1h</div>
+                <div class="text-[10px] text-slate-400 mt-0.5 truncate">Binance 24/7 SMC Stream</div>
+            </div>
 
-                <!-- Agent 2: Filter -->
-                <div class="bg-cybercard p-2.5 rounded-xl glow-border">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] font-mono font-semibold text-slate-400">02. FILTER</span>
-                        <span id="agent-filter-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">CLEAR</span>
-                    </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-filter-detail">F&G: Neutral | Macro OK</div>
-                    <div class="text-[10px] text-slate-500 mt-0.5">Macro Shield & Sentiment</div>
+            <!-- Agent 2: Filter -->
+            <div class="bg-white dark:bg-[#0f1422] p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">02. FILTER</span>
+                    <span id="agent-filter-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">CLEAR</span>
                 </div>
+                <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200 truncate" id="agent-filter-detail">F&G: Neutral | Macro OK</div>
+                <div class="text-[10px] text-slate-400 mt-0.5 truncate">Macro Shield & Sentiment</div>
+            </div>
 
-                <!-- Agent 3: Sizer -->
-                <div class="bg-cybercard p-2.5 rounded-xl glow-border">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] font-mono font-semibold text-slate-400">03. SIZER</span>
-                        <span id="agent-sizer-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">ARMED</span>
-                    </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-sizer-detail">$20 1R | Daily $50 Cap</div>
-                    <div class="text-[10px] text-slate-500 mt-0.5">Volatility ATR Risk Guard</div>
+            <!-- Agent 3: Sizer -->
+            <div class="bg-white dark:bg-[#0f1422] p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">03. SIZER</span>
+                    <span id="agent-sizer-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">ARMED</span>
                 </div>
+                <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200 truncate" id="agent-sizer-detail">$20 1R | Daily $50 Cap</div>
+                <div class="text-[10px] text-slate-400 mt-0.5 truncate">Volatility ATR Risk Guard</div>
+            </div>
 
-                <!-- Agent 4: Executor -->
-                <div class="bg-cybercard p-2.5 rounded-xl glow-border">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] font-mono font-semibold text-slate-400">04. EXECUTOR</span>
-                        <span id="agent-executor-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-amber-500/20 text-amber-400">HUMAN</span>
-                    </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-executor-detail">Delta / Paper Engine</div>
-                    <div class="text-[10px] text-slate-500 mt-0.5">Direct Market Execution</div>
+            <!-- Agent 4: Executor -->
+            <div class="bg-white dark:bg-[#0f1422] p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">04. EXECUTOR</span>
+                    <span id="agent-executor-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">HUMAN</span>
                 </div>
+                <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200 truncate" id="agent-executor-detail">Delta / Paper Engine</div>
+                <div class="text-[10px] text-slate-400 mt-0.5 truncate">Direct Market Execution</div>
+            </div>
 
-                <!-- Agent 5: Logger -->
-                <div class="bg-cybercard p-2.5 rounded-xl glow-border">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] font-mono font-semibold text-slate-400">05. LOGGER</span>
-                        <span id="agent-logger-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">SYNCED</span>
-                    </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-logger-detail">Telegram + 4-Tab Sheet</div>
-                    <div class="text-[10px] text-slate-500 mt-0.5">Audit Ledger & Rotation</div>
+            <!-- Agent 5: Logger -->
+            <div class="bg-white dark:bg-[#0f1422] p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">05. LOGGER</span>
+                    <span id="agent-logger-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">SYNCED</span>
                 </div>
+                <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200 truncate" id="agent-logger-detail">Telegram + 4-Tab Sheet</div>
+                <div class="text-[10px] text-slate-400 mt-0.5 truncate">Audit Ledger & Rotation</div>
+            </div>
 
-                <!-- Agent 6: Equity -->
-                <div class="bg-cybercard p-2.5 rounded-xl glow-border">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] font-mono font-semibold text-slate-400">06. EQUITY</span>
-                        <span id="agent-equity-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">HEALTHY</span>
-                    </div>
-                    <div class="text-xs font-bold text-white font-mono truncate" id="agent-equity-detail">WR: --% | PnL: $0.00</div>
-                    <div class="text-[10px] text-slate-500 mt-0.5">Capital Preservation Guard</div>
+            <!-- Agent 6: Equity -->
+            <div class="bg-white dark:bg-[#0f1422] p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">06. EQUITY</span>
+                    <span id="agent-equity-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">HEALTHY</span>
                 </div>
+                <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200 truncate" id="agent-equity-detail">WR: --% | PnL: $0.00</div>
+                <div class="text-[10px] text-slate-400 mt-0.5 truncate">Capital Preservation Guard</div>
             </div>
         </section>
 
-        <!-- 3. Center Pro Trading Viewport (65% Chart / 35% L2 Book & Fast Order Desk) -->
+        <!-- 3. Center Pro Trading Viewport (Chart 65% / Order Book & Fast Order Desk 35%) -->
         <section class="grid grid-cols-1 lg:grid-cols-12 gap-3">
 
-            <!-- Main Chart Viewport (65% width / lg:col-span-8) -->
-            <div class="lg:col-span-8 bg-cybercard rounded-xl p-3 border border-cyberborder flex flex-col glow-border">
+            <!-- Main Chart Viewport (lg:col-span-8) -->
+            <div class="lg:col-span-8 bg-white dark:bg-[#0f1422] rounded-xl p-3 border border-slate-200 dark:border-slate-800/80 shadow-sm flex flex-col">
                 
                 <!-- Chart Toolbar Header -->
-                <div class="flex items-center justify-between pb-2 border-b border-cyberborder mb-2 flex-wrap gap-2">
+                <div class="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-800 mb-2.5 flex-wrap gap-2">
                     <div class="flex items-center space-x-2">
-                        <span class="text-lg">📊</span>
-                        <span id="chart-symbol-title" class="font-bold text-sm font-mono text-white">BINANCE:BTCUSDT</span>
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">SMC PRO</span>
+                        <i data-lucide="candlestick-chart" class="w-4 h-4 text-blue-500"></i>
+                        <span id="chart-symbol-title" class="font-bold text-sm font-mono text-slate-900 dark:text-white">BINANCE:BTCUSDT</span>
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">SMC PRO</span>
                     </div>
 
                     <!-- Timeframe Buttons -->
-                    <div class="flex items-center space-x-1 bg-cyberdark p-1 rounded-lg border border-cyberborder">
-                        <button onclick="setTimeframe('1m')" id="tf-1m" class="px-2 py-0.5 text-xs font-mono rounded text-slate-400 hover:text-white transition">1m</button>
-                        <button onclick="setTimeframe('5m')" id="tf-5m" class="px-2 py-0.5 text-xs font-mono rounded text-slate-400 hover:text-white transition">5m</button>
-                        <button onclick="setTimeframe('15m')" id="tf-15m" class="px-2 py-0.5 text-xs font-mono rounded bg-cyan-500/20 text-cyancyan font-bold transition">15m</button>
-                        <button onclick="setTimeframe('1h')" id="tf-1h" class="px-2 py-0.5 text-xs font-mono rounded text-slate-400 hover:text-white transition">1h</button>
-                        <button onclick="setTimeframe('4h')" id="tf-4h" class="px-2 py-0.5 text-xs font-mono rounded text-slate-400 hover:text-white transition">4h</button>
+                    <div class="flex items-center space-x-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <button onclick="setTimeframe('1m')" id="tf-1m" class="px-2 py-0.5 text-xs font-mono rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition">1m</button>
+                        <button onclick="setTimeframe('5m')" id="tf-5m" class="px-2 py-0.5 text-xs font-mono rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition">5m</button>
+                        <button onclick="setTimeframe('15m')" id="tf-15m" class="px-2 py-0.5 text-xs font-mono rounded bg-blue-600 text-white font-bold transition">15m</button>
+                        <button onclick="setTimeframe('1h')" id="tf-1h" class="px-2 py-0.5 text-xs font-mono rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition">1h</button>
+                        <button onclick="setTimeframe('4h')" id="tf-4h" class="px-2 py-0.5 text-xs font-mono rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition">4h</button>
                     </div>
 
                     <div class="flex items-center space-x-2">
-                        <button onclick="reloadChart()" class="text-xs font-mono text-slate-400 hover:text-cyancyan transition flex items-center space-x-1">
-                            <span>🔄</span>
+                        <button onclick="reloadChart()" class="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center space-x-1">
+                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
                             <span>RELOAD</span>
                         </button>
                     </div>
                 </div>
 
                 <!-- TradingView Chart Container -->
-                <div class="w-full flex-1 min-h-[500px] rounded-lg overflow-hidden bg-cyberdark border border-cyberborder/60 relative">
-                    <div id="tradingview_main" class="w-full h-full min-h-[500px]"></div>
+                <div class="w-full flex-1 min-h-[480px] rounded-lg overflow-hidden bg-slate-100 dark:bg-[#080c14] border border-slate-200 dark:border-slate-800/80 relative">
+                    <div id="tradingview_main" class="w-full h-full min-h-[480px]"></div>
                 </div>
             </div>
 
-            <!-- Right Sidepanel: L2 Order Book Depth & Fast Order Entry Desk (35% width / lg:col-span-4) -->
+            <!-- Right Sidepanel: L2 Order Book Depth & Fast Order Entry Desk (lg:col-span-4) -->
             <div class="lg:col-span-4 flex flex-col space-y-3">
 
                 <!-- L2 Order Book Depth DOM Card -->
-                <div class="bg-cybercard rounded-xl p-3 border border-cyberborder glow-border flex flex-col">
-                    <div class="flex items-center justify-between pb-2 border-b border-cyberborder mb-2">
+                <div class="bg-white dark:bg-[#0f1422] rounded-xl p-3 border border-slate-200 dark:border-slate-800/80 shadow-sm flex flex-col">
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800 mb-2">
                         <div class="flex items-center space-x-1.5">
-                            <span class="text-xs font-bold font-mono tracking-wider uppercase text-white">L2 ORDER BOOK</span>
-                            <span id="orderbook-symbol-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-800 text-slate-300">BTCUSDT</span>
+                            <span class="text-xs font-bold tracking-wider uppercase text-slate-900 dark:text-white">L2 ORDER BOOK</span>
+                            <span id="orderbook-symbol-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">BTCUSDT</span>
                         </div>
-                        <span id="orderbook-spread-badge" class="text-[10px] font-mono text-slate-400 tabular-nums">Spread: $1.20 (0.001%)</span>
+                        <span id="orderbook-spread-badge" class="text-[10px] font-mono mono-num text-slate-500 dark:text-slate-400">Spread: $1.20 (0.001%)</span>
                     </div>
 
                     <!-- Column Header -->
-                    <div class="grid grid-cols-3 text-[10px] font-mono uppercase text-slate-500 px-1 pb-1">
+                    <div class="grid grid-cols-3 text-[10px] font-mono uppercase text-slate-400 dark:text-slate-500 px-1 pb-1">
                         <span>Price (USDT)</span>
                         <span class="text-right">Size</span>
                         <span class="text-right">Total</span>
                     </div>
 
                     <!-- Asks List (Top rows, Red) -->
-                    <div id="orderbook-asks" class="space-y-0.5 font-mono text-[11px] tabular-nums overflow-hidden flex flex-col-reverse">
-                        <!-- Populated by JS -->
+                    <div id="orderbook-asks" class="space-y-0.5 font-mono text-[11px] mono-num overflow-hidden flex flex-col-reverse">
+                        <!-- Populated dynamically by JS -->
                     </div>
 
                     <!-- Mid-Market Current Price Banner -->
-                    <div class="py-1 px-2 my-1 bg-cyberdark rounded border border-cyberborder flex items-center justify-between">
+                    <div class="py-1 px-2 my-1 bg-slate-50 dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                         <div class="flex items-baseline space-x-2">
-                            <span id="orderbook-mid-price" class="text-sm font-extrabold font-mono tabular-nums text-cyangreen">$91,250.00</span>
-                            <span id="orderbook-mid-arrow" class="text-xs text-cyangreen">↗</span>
+                            <span id="orderbook-mid-price" class="text-sm font-extrabold font-mono mono-num text-emerald-600 dark:text-emerald-400">$91,250.00</span>
+                            <span id="orderbook-mid-arrow" class="text-xs text-emerald-600 dark:text-emerald-400 font-bold">↗</span>
                         </div>
                         <span id="orderbook-mid-sub" class="text-[10px] font-mono text-slate-400">Mark Price</span>
                     </div>
 
-                    <!-- Bids List (Top rows, Green) -->
-                    <div id="orderbook-bids" class="space-y-0.5 font-mono text-[11px] tabular-nums overflow-hidden">
-                        <!-- Populated by JS -->
+                    <!-- Bids List (Bottom rows, Green) -->
+                    <div id="orderbook-bids" class="space-y-0.5 font-mono text-[11px] mono-num overflow-hidden">
+                        <!-- Populated dynamically by JS -->
                     </div>
                 </div>
 
                 <!-- Fast Order Entry Desk Card -->
-                <div class="bg-cybercard rounded-xl p-3.5 border border-cyberborder glow-border space-y-2.5">
-                    <div class="flex items-center justify-between pb-2 border-b border-cyberborder">
+                <div class="bg-white dark:bg-[#0f1422] rounded-xl p-3.5 border border-slate-200 dark:border-slate-800/80 shadow-sm space-y-2.5">
+                    <div class="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
                         <div class="flex items-center space-x-1.5">
-                            <span class="text-xs font-bold font-mono tracking-wider uppercase text-white">⚡ FAST ORDER ENTRY</span>
-                            <span id="order-entry-symbol" class="text-[11px] font-bold font-mono text-cyancyan">BTCUSDT</span>
+                            <i data-lucide="zap" class="w-3.5 h-3.5 text-blue-500"></i>
+                            <span class="text-xs font-bold tracking-wider uppercase text-slate-900 dark:text-white">FAST ORDER ENTRY</span>
+                            <span id="order-entry-symbol" class="text-[11px] font-bold font-mono text-blue-600 dark:text-blue-400">BTCUSDT</span>
                         </div>
-                        <span class="text-[10px] font-mono text-slate-400">1-CLICK EXECUTION</span>
+                        <span class="text-[10px] font-mono text-slate-400">1-CLICK DESK</span>
                     </div>
 
                     <!-- Buy/Long vs Sell/Short Tabs -->
-                    <div class="grid grid-cols-2 gap-1.5 p-1 bg-cyberdark rounded-lg border border-cyberborder">
-                        <button id="order-side-buy" onclick="setOrderSide('BUY')" class="py-1 text-xs font-mono font-bold rounded tracking-wider transition bg-emerald-500/20 text-cyangreen border border-emerald-500/40">
-                            🟢 BUY / LONG
+                    <div class="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <button id="order-side-buy" onclick="setOrderSide('BUY')" class="py-1 text-xs font-mono font-bold rounded tracking-wide transition bg-emerald-600 text-white shadow-sm">
+                            BUY / LONG
                         </button>
-                        <button id="order-side-sell" onclick="setOrderSide('SELL')" class="py-1 text-xs font-mono font-bold rounded tracking-wider transition bg-transparent text-slate-400 hover:text-white">
-                            🔴 SELL / SHORT
+                        <button id="order-side-sell" onclick="setOrderSide('SELL')" class="py-1 text-xs font-mono font-bold rounded tracking-wide transition bg-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+                            SELL / SHORT
                         </button>
                     </div>
 
                     <!-- Order Type Selector -->
                     <div class="flex items-center justify-between text-xs font-mono">
-                        <span class="text-slate-400">Order Type:</span>
+                        <span class="text-slate-500 dark:text-slate-400">Order Type:</span>
                         <div class="flex space-x-1">
-                            <button id="type-market-btn" onclick="setOrderType('MARKET')" class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan font-bold border border-cyan-500/30 text-[11px]">MARKET</button>
-                            <button id="type-limit-btn" onclick="setOrderType('LIMIT')" class="px-2 py-0.5 rounded bg-cyberdark text-slate-400 border border-cyberborder text-[11px]">LIMIT</button>
+                            <button id="type-market-btn" onclick="setOrderType('MARKET')" class="px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[11px]">MARKET</button>
+                            <button id="type-limit-btn" onclick="setOrderType('LIMIT')" class="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 text-[11px]">LIMIT</button>
                         </div>
                     </div>
 
                     <!-- Limit Price Input (Only active when LIMIT) -->
                     <div id="limit-price-group" class="hidden space-y-1">
-                        <div class="flex justify-between text-[11px] font-mono text-slate-400">
+                        <div class="flex justify-between text-[11px] font-mono text-slate-500 dark:text-slate-400">
                             <span>Limit Price (USDT):</span>
                         </div>
-                        <input type="number" id="order-limit-price" step="any" placeholder="Enter price" class="w-full bg-cyberdark border border-cyberborder rounded px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:border-cyancyan tabular-nums">
+                        <input type="number" id="order-limit-price" step="any" placeholder="Enter price" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-1 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 mono-num">
                     </div>
 
                     <!-- Leverage Slider -->
                     <div class="space-y-1">
                         <div class="flex justify-between text-[11px] font-mono">
-                            <span class="text-slate-400">Leverage:</span>
-                            <span id="leverage-display-badge" class="font-bold text-cyancyan font-mono">10x</span>
+                            <span class="text-slate-500 dark:text-slate-400">Leverage:</span>
+                            <span id="leverage-display-badge" class="font-bold text-blue-600 dark:text-blue-400 font-mono">10x</span>
                         </div>
-                        <input type="range" id="order-leverage-slider" min="1" max="100" value="10" step="1" oninput="updateLeverage(this.value)" class="w-full accent-cyancyan bg-cyberdark cursor-pointer h-1.5 rounded-lg">
-                        <div class="flex justify-between text-[9px] font-mono text-slate-500">
+                        <input type="range" id="order-leverage-slider" min="1" max="100" value="10" step="1" oninput="updateLeverage(this.value)" class="w-full accent-blue-600 bg-slate-200 dark:bg-slate-800 cursor-pointer h-1.5 rounded-lg">
+                        <div class="flex justify-between text-[9px] font-mono text-slate-400">
                             <span>1x</span>
                             <span>25x</span>
                             <span>50x</span>
@@ -499,38 +534,38 @@
                         </div>
                     </div>
 
-                    <!-- Quick % Size Chips & Size USD -->
+                    <!-- Position Size & Quick % Chips -->
                     <div class="space-y-1.5">
                         <div class="flex justify-between text-[11px] font-mono">
-                            <span class="text-slate-400">Position Size (USD):</span>
-                            <span id="order-avail-cash-hint" class="text-slate-500 text-[10px] tabular-nums">Avail: $1,000.00</span>
+                            <span class="text-slate-500 dark:text-slate-400">Position Size (USD):</span>
+                            <span id="order-avail-cash-hint" class="text-slate-400 text-[10px] mono-num">Avail: $1,000.00</span>
                         </div>
                         <div class="flex space-x-1">
-                            <input type="number" id="order-size-usd" value="100" min="5" step="10" placeholder="100" class="w-full bg-cyberdark border border-cyberborder rounded px-2.5 py-1 text-xs font-mono text-white focus:outline-none focus:border-cyancyan tabular-nums">
+                            <input type="number" id="order-size-usd" value="100" min="5" step="10" placeholder="100" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-2.5 py-1 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 mono-num">
                         </div>
                         <!-- Percent Chips -->
                         <div class="grid grid-cols-4 gap-1 text-center">
-                            <button type="button" onclick="setQuickSize(10)" class="py-0.5 rounded bg-cyberdark border border-cyberborder text-[10px] font-mono text-slate-400 hover:text-cyancyan hover:border-cyancyan">10%</button>
-                            <button type="button" onclick="setQuickSize(25)" class="py-0.5 rounded bg-cyberdark border border-cyberborder text-[10px] font-mono text-slate-400 hover:text-cyancyan hover:border-cyancyan">25%</button>
-                            <button type="button" onclick="setQuickSize(50)" class="py-0.5 rounded bg-cyberdark border border-cyberborder text-[10px] font-mono text-slate-400 hover:text-cyancyan hover:border-cyancyan">50%</button>
-                            <button type="button" onclick="setQuickSize(100)" class="py-0.5 rounded bg-cyberdark border border-cyberborder text-[10px] font-mono text-slate-400 hover:text-cyancyan hover:border-cyancyan">100%</button>
+                            <button type="button" onclick="setQuickSize(10)" class="py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-400 hover:text-blue-600 hover:border-blue-400">10%</button>
+                            <button type="button" onclick="setQuickSize(25)" class="py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-400 hover:text-blue-600 hover:border-blue-400">25%</button>
+                            <button type="button" onclick="setQuickSize(50)" class="py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-400 hover:text-blue-600 hover:border-blue-400">50%</button>
+                            <button type="button" onclick="setQuickSize(100)" class="py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-400 hover:text-blue-600 hover:border-blue-400">100%</button>
                         </div>
                     </div>
 
-                    <!-- Risk Guard: SL & TP -->
+                    <!-- Stop-Loss & Take-Profit -->
                     <div class="grid grid-cols-2 gap-2 pt-1">
                         <div class="space-y-1">
-                            <label class="text-[10px] font-mono text-rose-400 block">STOP-LOSS ($)</label>
-                            <input type="number" id="order-sl-input" step="any" placeholder="Auto / Manual" class="w-full bg-cyberdark border border-cyberborder rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-rose-400 tabular-nums">
+                            <label class="text-[10px] font-mono text-rose-500 dark:text-rose-400 block font-semibold">STOP-LOSS ($)</label>
+                            <input type="number" id="order-sl-input" step="any" placeholder="Auto / Manual" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-rose-500 mono-num">
                         </div>
                         <div class="space-y-1">
-                            <label class="text-[10px] font-mono text-emerald-400 block">TAKE-PROFIT ($)</label>
-                            <input type="number" id="order-tp-input" step="any" placeholder="Auto / Manual" class="w-full bg-cyberdark border border-cyberborder rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-emerald-400 tabular-nums">
+                            <label class="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 block font-semibold">TAKE-PROFIT ($)</label>
+                            <input type="number" id="order-tp-input" step="any" placeholder="Auto / Manual" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 mono-num">
                         </div>
                     </div>
 
                     <!-- 1-Click Execute Button -->
-                    <button id="order-execute-btn" onclick="executeManualTrade()" class="w-full py-2 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-200 bg-emerald-500/20 text-cyangreen border border-cyangreen shadow-neon-green hover:bg-emerald-500/30 flex items-center justify-center space-x-1.5">
+                    <button id="order-execute-btn" onclick="executeManualTrade()" class="w-full py-2.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-200 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center justify-center space-x-1.5">
                         <span id="order-exec-icon">⚡</span>
                         <span id="order-exec-text">EXECUTE BUY / LONG (MARKET)</span>
                     </button>
@@ -539,18 +574,18 @@
             </div>
         </section>
 
-        <!-- 4. Capital & Performance Analytics Row (Symmetrical Twin Cards) -->
+        <!-- 4. Capital & Performance Analytics (Twin Modern Cards) -->
         <section class="grid grid-cols-1 lg:grid-cols-2 gap-3">
 
             <!-- Card 1: Equity Curve Chart & Adaptive Parameters -->
-            <div class="bg-cybercard rounded-xl p-4 glow-border space-y-3 flex flex-col justify-between">
+            <div class="bg-white dark:bg-[#0f1422] rounded-xl p-4 border border-slate-200 dark:border-slate-800/80 shadow-sm space-y-3 flex flex-col justify-between">
                 <div>
-                    <div class="flex items-center justify-between border-b border-cyberborder pb-2.5 mb-2.5">
+                    <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2.5 mb-2.5">
                         <div class="flex items-center space-x-2">
-                            <span class="text-base">📈</span>
-                            <h3 class="text-sm font-bold font-mono tracking-wider uppercase text-white">EQUITY CURVE & PERFORMANCE</h3>
+                            <i data-lucide="trending-up" class="w-4 h-4 text-blue-500"></i>
+                            <h3 class="text-sm font-bold tracking-wide uppercase text-slate-900 dark:text-white">EQUITY CURVE & PERFORMANCE</h3>
                         </div>
-                        <span id="chart-net-pnl" class="text-xs font-bold font-mono tabular-nums text-emerald-400">+$0.00</span>
+                        <span id="chart-net-pnl" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">+$0.00</span>
                     </div>
 
                     <div class="h-44 w-full">
@@ -559,39 +594,42 @@
                 </div>
 
                 <!-- Adaptive Tuner Status Panel -->
-                <div class="bg-cyberdark p-3 rounded-lg border border-cyberborder space-y-2">
+                <div class="bg-slate-50 dark:bg-slate-900/90 p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                     <div class="flex items-center justify-between">
-                        <span class="text-xs font-mono font-bold text-cyanpurple uppercase">🧠 AI ADAPTIVE PARAMETERS</span>
-                        <button onclick="triggerTuner()" class="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-cyanpurple hover:bg-purple-500/30 transition">OPTIMIZE NOW</button>
+                        <span class="text-xs font-mono font-semibold text-purple-600 dark:text-purple-400 uppercase flex items-center space-x-1">
+                            <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+                            <span>AI ADAPTIVE PARAMETERS</span>
+                        </span>
+                        <button onclick="triggerTuner()" class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-500/20 hover:bg-purple-100 transition">OPTIMIZE NOW</button>
                     </div>
                     <div class="grid grid-cols-3 gap-2 text-center">
-                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
-                            <div class="text-[10px] text-slate-400 mono-font">DISP ATR</div>
-                            <div class="text-xs font-bold text-white mono-font" id="tune-disp">1.2x</div>
+                        <div class="p-1.5 bg-white dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800">
+                            <div class="text-[10px] text-slate-400 font-mono">DISP ATR</div>
+                            <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200" id="tune-disp">1.2x</div>
                         </div>
-                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
-                            <div class="text-[10px] text-slate-400 mono-font">TARGET RR</div>
-                            <div class="text-xs font-bold text-white mono-font" id="tune-rr">2.0R</div>
+                        <div class="p-1.5 bg-white dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800">
+                            <div class="text-[10px] text-slate-400 font-mono">TARGET RR</div>
+                            <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200" id="tune-rr">2.0R</div>
                         </div>
-                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
-                            <div class="text-[10px] text-slate-400 mono-font">SWEEP ATR</div>
-                            <div class="text-xs font-bold text-white mono-font" id="tune-sweep">0.10</div>
+                        <div class="p-1.5 bg-white dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800">
+                            <div class="text-[10px] text-slate-400 font-mono">SWEEP ATR</div>
+                            <div class="text-xs font-bold font-mono text-slate-800 dark:text-slate-200" id="tune-sweep">0.10</div>
                         </div>
                     </div>
-                    <div class="text-[11px] text-slate-400 italic truncate" id="tune-rationale">Institutional Baseline Settings active</div>
+                    <div class="text-[11px] text-slate-500 dark:text-slate-400 italic truncate" id="tune-rationale">Institutional Baseline Settings active</div>
                 </div>
             </div>
 
             <!-- Card 2: Delta Account Money Balance & Capital Metrics -->
-            <div class="bg-cybercard rounded-xl p-4 glow-border space-y-3 flex flex-col justify-between">
+            <div class="bg-white dark:bg-[#0f1422] rounded-xl p-4 border border-slate-200 dark:border-slate-800/80 shadow-sm space-y-3 flex flex-col justify-between">
                 <div>
-                    <div class="flex items-center justify-between border-b border-cyberborder pb-2.5 mb-2.5">
+                    <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2.5 mb-2.5">
                         <div class="flex items-center space-x-2">
-                            <span class="text-base">🏦</span>
-                            <h3 class="text-sm font-bold font-mono tracking-wider uppercase text-white">DELTA ACCOUNT BALANCE</h3>
-                            <span id="delta-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">TESTNET</span>
+                            <i data-lucide="wallet" class="w-4 h-4 text-emerald-500"></i>
+                            <h3 class="text-sm font-bold tracking-wide uppercase text-slate-900 dark:text-white">DELTA ACCOUNT BALANCE</h3>
+                            <span id="delta-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">TESTNET</span>
                         </div>
-                        <span id="delta-total-balance" class="text-xs font-bold font-mono tabular-nums text-emerald-400">$1,000.00 USDT</span>
+                        <span id="delta-total-balance" class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400">$1,000.00 USDT</span>
                     </div>
 
                     <div class="h-44 w-full">
@@ -600,92 +638,95 @@
                 </div>
 
                 <!-- Delta Live Capital Metrics Panel -->
-                <div class="bg-cyberdark p-3 rounded-lg border border-cyberborder space-y-2">
+                <div class="bg-slate-50 dark:bg-slate-900/90 p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                     <div class="flex items-center justify-between">
-                        <span class="text-xs font-mono font-bold text-cyancyan uppercase">⚡ DELTA MARGIN & CAPITAL METRICS</span>
-                        <button onclick="fetchDeltaWallet(true)" id="delta-sync-btn" class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan hover:bg-cyan-500/30 transition flex items-center space-x-1">
-                            <span id="delta-sync-icon">🔄</span>
+                        <span class="text-xs font-mono font-semibold text-blue-600 dark:text-blue-400 uppercase flex items-center space-x-1">
+                            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+                            <span>DELTA MARGIN & CAPITAL METRICS</span>
+                        </span>
+                        <button onclick="fetchDeltaWallet(true)" id="delta-sync-btn" class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20 hover:bg-blue-100 transition flex items-center space-x-1">
+                            <i id="delta-sync-icon" data-lucide="refresh-cw" class="w-3 h-3"></i>
                             <span>SYNC BALANCE</span>
                         </button>
                     </div>
                     <div class="grid grid-cols-3 gap-2 text-center">
-                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
-                            <div class="text-[10px] text-slate-400 mono-font">AVAILABLE CASH</div>
-                            <div class="text-xs font-bold text-white mono-font tabular-nums" id="delta-avail-cash">$1,000.00</div>
+                        <div class="p-1.5 bg-white dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800">
+                            <div class="text-[10px] text-slate-400 font-mono">AVAILABLE CASH</div>
+                            <div class="text-xs font-bold font-mono mono-num text-slate-800 dark:text-slate-200" id="delta-avail-cash">$1,000.00</div>
                         </div>
-                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
-                            <div class="text-[10px] text-slate-400 mono-font">POSITION MARGIN</div>
-                            <div class="text-xs font-bold text-white mono-font tabular-nums" id="delta-pos-margin">$0.00</div>
+                        <div class="p-1.5 bg-white dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800">
+                            <div class="text-[10px] text-slate-400 font-mono">POSITION MARGIN</div>
+                            <div class="text-xs font-bold font-mono mono-num text-slate-800 dark:text-slate-200" id="delta-pos-margin">$0.00</div>
                         </div>
-                        <div class="p-1.5 bg-cybercard rounded border border-cyberborder">
-                            <div class="text-[10px] text-slate-400 mono-font">UNREALIZED PNL</div>
-                            <div class="text-xs font-bold text-emerald-400 mono-font tabular-nums" id="delta-unrealized-pnl">+$0.00</div>
+                        <div class="p-1.5 bg-white dark:bg-[#131929] rounded border border-slate-200 dark:border-slate-800">
+                            <div class="text-[10px] text-slate-400 font-mono">UNREALIZED PNL</div>
+                            <div class="text-xs font-bold font-mono mono-num text-emerald-600 dark:text-emerald-400" id="delta-unrealized-pnl">+$0.00</div>
                         </div>
                     </div>
-                    <div class="text-[11px] text-slate-400 italic truncate" id="delta-status-rationale">Delta Exchange Testnet API Connected // Real-time Margin Utilization: 0.0%</div>
+                    <div class="text-[11px] text-slate-500 dark:text-slate-400 italic truncate" id="delta-status-rationale">Delta Exchange Testnet API Connected // Real-time Margin: 0.0%</div>
                 </div>
             </div>
 
         </section>
 
-        <!-- 5. Bottom Dock Multi-Tab Workspace (Binance/Bybit Style) -->
-        <section class="bg-cybercard rounded-xl border border-cyberborder overflow-hidden glow-border">
+        <!-- 5. Bottom Multi-Tab Workspace (Bloomberg / Binance Style) -->
+        <section class="bg-white dark:bg-[#0f1422] rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm overflow-hidden">
             
             <!-- Navigation Tab Header -->
-            <div class="flex items-center justify-between border-b border-cyberborder bg-cyberdark/60 px-3">
-                <div class="flex items-center space-x-1">
-                    <button id="tab-btn-positions" onclick="switchDockTab('positions')" class="px-3 py-2 text-xs font-bold font-mono uppercase tracking-wider transition dock-tab-active flex items-center space-x-1.5">
-                        <span>💼</span>
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 px-3 overflow-x-auto">
+                <div class="flex items-center space-x-1 min-w-max">
+                    <button id="tab-btn-positions" onclick="switchDockTab('positions')" class="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider transition dock-tab-active flex items-center space-x-1.5">
+                        <i data-lucide="briefcase" class="w-3.5 h-3.5"></i>
                         <span>OPEN POSITIONS</span>
-                        <span id="dock-pos-count" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">0</span>
+                        <span id="dock-pos-count" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300">0</span>
                     </button>
-                    <button id="tab-btn-approvals" onclick="switchDockTab('approvals')" class="px-3 py-2 text-xs font-bold font-mono uppercase tracking-wider text-slate-400 hover:text-white transition flex items-center space-x-1.5">
-                        <span>⏳</span>
+                    <button id="tab-btn-approvals" onclick="switchDockTab('approvals')" class="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center space-x-1.5">
+                        <i data-lucide="clock" class="w-3.5 h-3.5"></i>
                         <span>PENDING APPROVALS</span>
-                        <span id="dock-pending-count" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-amber-500/20 text-amber-400">0</span>
+                        <span id="dock-pending-count" class="px-1.5 py-0.2 rounded text-[10px] font-mono bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400">0</span>
                     </button>
-                    <button id="tab-btn-whales" onclick="switchDockTab('whales')" class="px-3 py-2 text-xs font-bold font-mono uppercase tracking-wider text-slate-400 hover:text-white transition flex items-center space-x-1.5">
-                        <span>🐋</span>
+                    <button id="tab-btn-whales" onclick="switchDockTab('whales')" class="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center space-x-1.5">
+                        <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i>
                         <span>WHALES & MACRO SENTIMENT</span>
                     </button>
-                    <button id="tab-btn-terminal" onclick="switchDockTab('terminal')" class="px-3 py-2 text-xs font-bold font-mono uppercase tracking-wider text-slate-400 hover:text-white transition flex items-center space-x-1.5">
-                        <span>💻</span>
+                    <button id="tab-btn-terminal" onclick="switchDockTab('terminal')" class="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center space-x-1.5">
+                        <i data-lucide="terminal" class="w-3.5 h-3.5"></i>
                         <span>LIVE TERMINAL LOGS</span>
                     </button>
                 </div>
 
-                <div class="flex items-center space-x-2 py-1.5">
-                    <button onclick="fetchLatestData()" class="text-xs font-mono text-slate-400 hover:text-white transition flex items-center space-x-1">
-                        <span>🔄</span>
-                        <span>REFRESH DOCK</span>
+                <div class="flex items-center space-x-2 py-1.5 ml-4">
+                    <button onclick="fetchLatestData()" class="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center space-x-1">
+                        <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                        <span class="hidden sm:inline">REFRESH</span>
                     </button>
                 </div>
             </div>
 
             <!-- Tab Content 1: Live Open Positions Table -->
             <div id="tab-pane-positions" class="p-3">
-                <!-- Positions Segmented Source Filter & Status Bar -->
-                <div class="flex items-center justify-between pb-2 mb-2 border-b border-cyberborder flex-wrap gap-2">
-                    <div class="flex items-center space-x-1.5 bg-cyberdark p-1 rounded-lg border border-cyberborder">
-                        <button id="pos-filter-all" onclick="setPosFilter('ALL')" class="px-2.5 py-1 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyancyan border border-cyan-500/40 transition">
-                            ALL POSITIONS (<span id="count-pos-all">0</span>)
+                <!-- Segmented Broker Filter & Sync Indicator -->
+                <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-200 dark:border-slate-800 flex-wrap gap-2">
+                    <div class="flex items-center space-x-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <button id="pos-filter-all" onclick="setPosFilter('ALL')" class="px-2.5 py-1 rounded text-xs font-mono font-bold bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm transition">
+                            ALL (<span id="count-pos-all">0</span>)
                         </button>
-                        <button id="pos-filter-delta" onclick="setPosFilter('DELTA')" class="px-2.5 py-1 rounded text-xs font-mono font-bold text-slate-400 hover:text-white border border-transparent transition">
+                        <button id="pos-filter-delta" onclick="setPosFilter('DELTA')" class="px-2.5 py-1 rounded text-xs font-mono font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition">
                             ⚡ DELTA EXCHANGE LIVE (<span id="count-pos-delta">0</span>)
                         </button>
-                        <button id="pos-filter-paper" onclick="setPosFilter('PAPER')" class="px-2.5 py-1 rounded text-xs font-mono font-bold text-slate-400 hover:text-white border border-transparent transition">
+                        <button id="pos-filter-paper" onclick="setPosFilter('PAPER')" class="px-2.5 py-1 rounded text-xs font-mono font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition">
                             📑 PAPER VIRTUAL (<span id="count-pos-paper">0</span>)
                         </button>
                     </div>
-                    <div class="flex items-center space-x-2 text-[10px] font-mono text-slate-400">
-                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <div class="flex items-center space-x-2 text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                         <span id="pos-source-indicator">DELTA EXCHANGE SYNC ACTIVE</span>
                     </div>
                 </div>
 
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left text-xs font-mono tabular-nums">
-                        <thead class="bg-cyberdark text-slate-400 uppercase tracking-wider border-b border-cyberborder">
+                    <table class="w-full text-left text-xs font-mono mono-num">
+                        <thead class="bg-slate-50 dark:bg-slate-900/80 text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
                             <tr>
                                 <th class="p-2.5">Asset</th>
                                 <th class="p-2.5">Broker / Source</th>
@@ -698,9 +739,9 @@
                                 <th class="p-2.5 text-right">Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="open-positions-tbody" class="divide-y divide-cyberborder">
+                        <tbody id="open-positions-tbody" class="divide-y divide-slate-100 dark:divide-slate-800/80 text-slate-800 dark:text-slate-200">
                             <tr>
-                                <td colspan="9" class="text-center p-6 text-slate-500">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
+                                <td colspan="9" class="text-center p-6 text-slate-400 dark:text-slate-500 font-sans">No open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -709,60 +750,60 @@
 
             <!-- Tab Content 2: Pending Human Approvals -->
             <div id="tab-pane-approvals" class="hidden p-3 space-y-2">
-                <div class="flex items-center justify-between pb-2 border-b border-cyberborder">
-                    <div class="text-xs font-mono text-slate-400">Review and approve high-probability setups detected by Scanner in HUMAN execution mode:</div>
-                    <span id="pending-count-badge" class="text-xs font-mono text-amber-400">0 PENDING</span>
+                <div class="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                    <div class="text-xs text-slate-500 dark:text-slate-400">Review and approve high-probability setups detected by Scanner in HUMAN execution mode:</div>
+                    <span id="pending-count-badge" class="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">0 PENDING</span>
                 </div>
                 <div id="pending-container" class="space-y-2 pt-1">
-                    <div class="text-xs text-slate-500 italic p-3 text-center bg-cyberdark rounded-lg">No pending trade confirmations.</div>
+                    <div class="text-xs text-slate-400 dark:text-slate-500 italic p-4 text-center bg-slate-50 dark:bg-slate-900/50 rounded-lg">No pending trade confirmations.</div>
                 </div>
             </div>
 
-            <!-- Tab Content 3: Whale Derivatives & Macro Sentiment (Enriched with Liquidations, Funding, F&G meter) -->
+            <!-- Tab Content 3: Whale Derivatives & Macro Sentiment -->
             <div id="tab-pane-whales" class="hidden p-3">
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                     
                     <!-- Fear & Greed Card -->
-                    <div class="bg-cyberdark p-3.5 rounded-lg border border-cyberborder space-y-2">
+                    <div class="bg-slate-50 dark:bg-slate-900/70 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-mono font-bold uppercase text-slate-300">FEAR & GREED SENTIMENT</span>
-                            <span id="fg-class-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">NEUTRAL</span>
+                            <span class="text-xs font-semibold uppercase text-slate-600 dark:text-slate-300">FEAR & GREED SENTIMENT</span>
+                            <span id="fg-class-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300">NEUTRAL</span>
                         </div>
                         <div class="flex items-baseline space-x-2">
-                            <span id="fg-score-val" class="text-2xl font-extrabold font-mono tabular-nums text-white">50</span>
-                            <span class="text-xs font-mono text-slate-500">/ 100</span>
+                            <span id="fg-score-val" class="text-2xl font-extrabold font-mono mono-num text-slate-900 dark:text-white">50</span>
+                            <span class="text-xs font-mono text-slate-400">/ 100</span>
                         </div>
-                        <div class="text-[11px] text-slate-400" id="fg-advice-text">Market sentiment is balanced. Scanner filtering noisy moves.</div>
+                        <div class="text-[11px] text-slate-500 dark:text-slate-400" id="fg-advice-text">Market sentiment is balanced. Scanner filtering noisy moves.</div>
                     </div>
 
                     <!-- Macro Shield Card -->
-                    <div class="bg-cyberdark p-3.5 rounded-lg border border-cyberborder space-y-2">
+                    <div class="bg-slate-50 dark:bg-slate-900/70 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-mono font-bold uppercase text-slate-300">MACRO EVENT SHIELD</span>
-                            <span id="macro-status-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">CLEAR</span>
+                            <span class="text-xs font-semibold uppercase text-slate-600 dark:text-slate-300">MACRO EVENT SHIELD</span>
+                            <span id="macro-status-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">CLEAR</span>
                         </div>
-                        <div class="text-sm font-bold font-mono text-white" id="macro-status-text">NO ANNOUNCEMENT LOCK</div>
-                        <div class="text-[11px] text-slate-400" id="macro-reason-text">30m pre-event and 15m post-event guard active for CPI / FOMC / NFP.</div>
+                        <div class="text-sm font-bold font-mono text-slate-900 dark:text-white" id="macro-status-text">NO ANNOUNCEMENT LOCK</div>
+                        <div class="text-[11px] text-slate-500 dark:text-slate-400" id="macro-reason-text">30m pre-event and 15m post-event guard active for CPI / FOMC / NFP.</div>
                     </div>
 
                     <!-- Whale Position Flow Card -->
-                    <div class="bg-cyberdark p-3.5 rounded-lg border border-cyberborder space-y-2">
+                    <div class="bg-slate-50 dark:bg-slate-900/70 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-mono font-bold uppercase text-slate-300">WHALE DERIVATIVES FLOW</span>
-                            <span id="whale-ratio-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan">52% LONG</span>
+                            <span class="text-xs font-semibold uppercase text-slate-600 dark:text-slate-300">WHALE DERIVATIVES FLOW</span>
+                            <span id="whale-ratio-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300">52% LONG</span>
                         </div>
-                        <div class="text-sm font-bold font-mono tabular-nums text-white" id="whale-sentiment-summary">TOP TRADER RATIO: 1.08</div>
-                        <div class="text-[11px] text-slate-400" id="whale-detail-text">Futures Open Interest & Whale taker volume aligned with daily bias.</div>
+                        <div class="text-sm font-bold font-mono mono-num text-slate-900 dark:text-white" id="whale-sentiment-summary">TOP TRADER RATIO: 1.08</div>
+                        <div class="text-[11px] text-slate-500 dark:text-slate-400" id="whale-detail-text">Futures Open Interest & Whale taker volume aligned with daily bias.</div>
                     </div>
 
                     <!-- Funding & Liquidations Summary Card -->
-                    <div class="bg-cyberdark p-3.5 rounded-lg border border-cyberborder space-y-2">
+                    <div class="bg-slate-50 dark:bg-slate-900/70 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                         <div class="flex items-center justify-between">
-                            <span class="text-xs font-mono font-bold uppercase text-slate-300">FUNDING & LIQUIDATIONS</span>
-                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400">+0.0100% / 8h</span>
+                            <span class="text-xs font-semibold uppercase text-slate-600 dark:text-slate-300">FUNDING & LIQUIDATIONS</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">+0.0100% / 8h</span>
                         </div>
-                        <div class="text-sm font-bold font-mono tabular-nums text-white">24h Liqs: $42.5M (68% Shorts)</div>
-                        <div class="text-[11px] text-slate-400">Predictive Cascade Sweep Guard armed for high-volatility sweeps.</div>
+                        <div class="text-sm font-bold font-mono mono-num text-slate-900 dark:text-white">24h Liqs: $42.5M (68% Shorts)</div>
+                        <div class="text-[11px] text-slate-500 dark:text-slate-400">Predictive Cascade Sweep Guard armed for high-volatility sweeps.</div>
                     </div>
 
                 </div>
@@ -772,20 +813,20 @@
             <div id="tab-pane-terminal" class="hidden p-3 space-y-2">
                 <div class="flex items-center justify-between pb-1">
                     <div class="flex items-center space-x-2">
-                        <span class="text-cyancyan font-bold font-mono">$</span>
-                        <span class="text-xs font-mono font-bold text-white uppercase tracking-wider">LIVE STREAMING TERMINAL (tail -f live.log)</span>
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        <i data-lucide="terminal" class="w-4 h-4 text-blue-500"></i>
+                        <span class="text-xs font-mono font-bold text-slate-800 dark:text-white uppercase tracking-wider">LIVE TELEMETRY STREAM (tail -f live.log)</span>
+                        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                     </div>
-                    <div class="flex items-center space-x-2">
-                        <button onclick="clearTerminalLogs()" class="px-2 py-0.5 text-xs font-mono rounded bg-slate-800 text-slate-300 hover:bg-slate-700 transition">CLEAR</button>
-                        <label class="flex items-center space-x-1.5 text-xs font-mono text-slate-400 cursor-pointer">
-                            <input type="checkbox" id="autoscroll-chk" checked class="rounded bg-cyberdark border-slate-700 text-cyancyan focus:ring-0">
+                    <div class="flex items-center space-x-3">
+                        <button onclick="clearTerminalLogs()" class="px-2 py-0.5 text-xs font-mono rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 transition">CLEAR</button>
+                        <label class="flex items-center space-x-1.5 text-xs font-mono text-slate-500 dark:text-slate-400 cursor-pointer">
+                            <input type="checkbox" id="autoscroll-chk" checked class="rounded border-slate-300 dark:border-slate-700 text-blue-600 focus:ring-0">
                             <span>AUTO-SCROLL</span>
                         </label>
                     </div>
                 </div>
 
-                <div id="terminal-box" class="h-64 overflow-y-auto bg-cyberdark/95 p-3 rounded-lg font-mono text-xs text-slate-300 space-y-1 border border-cyberborder shadow-inner scanlines tabular-nums">
+                <div id="terminal-box" class="h-64 overflow-y-auto bg-slate-900 text-slate-200 dark:bg-[#070a12] p-3 rounded-lg font-mono text-xs space-y-1 border border-slate-200 dark:border-slate-800 mono-num">
                     <div class="text-slate-500">[SYSTEM] Terminal initialized. Subscribing to live WebSocket telemetry stream...</div>
                 </div>
             </div>
@@ -795,63 +836,64 @@
     </main>
 
     <!-- Hotkeys Help Modal Dialog -->
-    <div id="hotkeys-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-cybercard border border-cyancyan rounded-2xl max-w-md w-full p-5 space-y-4 shadow-neon-cyan">
-            <div class="flex items-center justify-between border-b border-cyberborder pb-2">
-                <h3 class="text-base font-bold font-mono text-white flex items-center space-x-2">
-                    <span>⌨️</span>
-                    <span>PRO TERMINAL HOTKEYS GUIDE</span>
+    <div id="hotkeys-modal" class="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-[#0f1422] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-xl">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                <h3 class="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                    <i data-lucide="keyboard" class="w-4 h-4 text-blue-500"></i>
+                    <span>PRO TERMINAL HOTKEYS</span>
                 </h3>
-                <button onclick="toggleHotkeysHelp()" class="text-slate-400 hover:text-white font-mono text-lg">&times;</button>
+                <button onclick="toggleHotkeysHelp()" class="text-slate-400 hover:text-slate-600 dark:hover:text-white font-mono text-lg">&times;</button>
             </div>
             <div class="space-y-2 text-xs font-mono">
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-cyancyan font-bold">Spacebar</span>
-                    <span class="text-slate-300">Pause / Resume Scanner</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-blue-600 dark:text-blue-400 font-bold">Spacebar</span>
+                    <span class="text-slate-600 dark:text-slate-300">Pause / Resume Scanner</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-rose-400 font-bold">F key</span>
-                    <span class="text-slate-300">Emergency Flatten (Close All)</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-rose-600 dark:text-rose-400 font-bold">F key</span>
+                    <span class="text-slate-600 dark:text-slate-300">Emergency Flatten (Close All)</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-cyangreen font-bold">Key 1</span>
-                    <span class="text-slate-300">Switch to BTCUSDT</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-emerald-600 dark:text-emerald-400 font-bold">Key 1</span>
+                    <span class="text-slate-600 dark:text-slate-300">Switch to BTC/USDT</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-cyangreen font-bold">Key 2</span>
-                    <span class="text-slate-300">Switch to ETHUSDT</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-emerald-600 dark:text-emerald-400 font-bold">Key 2</span>
+                    <span class="text-slate-600 dark:text-slate-300">Switch to ETH/USDT</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-cyangreen font-bold">Key 3</span>
-                    <span class="text-slate-300">Switch to SOLUSDT</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-emerald-600 dark:text-emerald-400 font-bold">Key 3</span>
+                    <span class="text-slate-600 dark:text-slate-300">Switch to SOL/USDT</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-cyangreen font-bold">Key 4</span>
-                    <span class="text-slate-300">Switch to XRPUSDT</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-emerald-600 dark:text-emerald-400 font-bold">Key 4</span>
+                    <span class="text-slate-600 dark:text-slate-300">Switch to XRP/USDT</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-cyangreen font-bold">Key 5</span>
-                    <span class="text-slate-300">Switch to DOGEUSDT</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-emerald-600 dark:text-emerald-400 font-bold">Key 5</span>
+                    <span class="text-slate-600 dark:text-slate-300">Switch to DOGE/USDT</span>
                 </div>
-                <div class="flex justify-between py-1 border-b border-cyberborder/50">
-                    <span class="text-amber-300 font-bold">Key 6</span>
-                    <span class="text-slate-300">Switch to XAUTUSDT (Gold)</span>
+                <div class="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800/60">
+                    <span class="text-amber-600 dark:text-amber-400 font-bold">Key 6</span>
+                    <span class="text-slate-600 dark:text-slate-300">Switch to XAUT/USDT (Gold)</span>
                 </div>
             </div>
-            <div class="text-[11px] text-slate-400 text-center italic">
+            <div class="text-[11px] text-slate-400 dark:text-slate-500 text-center italic">
                 Note: Hotkeys are automatically disabled when typing inside form inputs.
             </div>
-            <button onclick="toggleHotkeysHelp()" class="w-full py-1.5 rounded-lg bg-cyberdark border border-cyberborder text-xs font-mono text-white hover:border-cyancyan">
+            <button onclick="toggleHotkeysHelp()" class="w-full py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 transition">
                 CLOSE
             </button>
         </div>
     </div>
 
     <!-- Footer -->
-    <footer class="border-t border-cyberborder py-3 text-center text-xs font-mono text-slate-500">
-        QUANTUM SMC TRADING CORE v2.0 // INSTITUTIONAL LIQUIDITY SWEEP & MULTI-BROKER ENGINE
+    <footer class="border-t border-slate-200 dark:border-slate-800/80 py-3 text-center text-xs font-mono text-slate-400 dark:text-slate-500">
+        QUANTUM SMC TRADING TERMINAL v2.0 // INSTITUTIONAL LIQUIDITY SWEEP & MULTI-BROKER ENGINE
     </footer>
 
+    <!-- Core Interactive Client Script -->
     <script>
         // --- Core Application State & Global Configuration ---
         let currentMode = "HUMAN";
@@ -870,20 +912,77 @@
         // Watchlist includes all 6 institutional symbols
         const WATCHLIST = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "XAUTUSDT"];
 
-        // Toast Notification System
+        // --- Theme Management (Light / Dark Mode) ---
+        function initTheme() {
+            const savedTheme = localStorage.getItem('app-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'dark');
+            setTheme(savedTheme, false);
+        }
+
+        function setTheme(theme, updateTV = true) {
+            const html = document.documentElement;
+            if (theme === 'dark') {
+                html.classList.add('dark');
+            } else {
+                html.classList.remove('dark');
+            }
+            localStorage.setItem('app-theme', theme);
+
+            // Re-render Lucide icons
+            if (window.lucide) {
+                window.lucide.createIcons();
+            }
+
+            // Update charts styling for theme contrast
+            updateChartsTheme(theme);
+
+            // Reload TradingView with matched theme
+            if (updateTV) {
+                loadTradingViewChart(activeSymbol, activeTimeframe);
+            }
+        }
+
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.contains('dark');
+            setTheme(isDark ? 'light' : 'dark', true);
+            showToast(`Switched to ${isDark ? 'Light' : 'Dark'} mode`, "info");
+        }
+
+        function updateChartsTheme(theme) {
+            const isDark = theme === 'dark';
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+            const tickColor = isDark ? '#94a3b8' : '#64748b';
+
+            if (equityChartInstance) {
+                equityChartInstance.options.scales.y.grid.color = gridColor;
+                equityChartInstance.options.scales.y.ticks.color = tickColor;
+                equityChartInstance.update();
+            }
+            if (deltaChartInstance) {
+                deltaChartInstance.options.scales.y.grid.color = gridColor;
+                deltaChartInstance.options.scales.y.ticks.color = tickColor;
+                if (deltaChartInstance.options.plugins.legend) {
+                    deltaChartInstance.options.plugins.legend.labels.color = tickColor;
+                }
+                deltaChartInstance.update();
+            }
+        }
+
+        // --- Professional Toast Notification System ---
         function showToast(msg, type = "info") {
             const container = document.getElementById('toast-container');
             if (!container) return;
             const toast = document.createElement('div');
-            let borderCls = "border-cyancyan text-cyancyan";
-            let bgCls = "bg-cybercard/95";
-            if (type === "success") borderCls = "border-cyangreen text-cyangreen";
-            if (type === "error") borderCls = "border-cyanpink text-cyanpink";
-            if (type === "warning") borderCls = "border-cyanyellow text-cyanyellow";
+            
+            let borderCls = "border-blue-500/40 text-blue-700 dark:text-blue-400 bg-white dark:bg-slate-900";
+            if (type === "success") borderCls = "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-white dark:bg-slate-900";
+            if (type === "error") borderCls = "border-rose-500/40 text-rose-700 dark:text-rose-400 bg-white dark:bg-slate-900";
+            if (type === "warning") borderCls = "border-amber-500/40 text-amber-700 dark:text-amber-400 bg-white dark:bg-slate-900";
 
-            toast.className = `p-3 rounded-lg border ${borderCls} ${bgCls} shadow-lg text-xs font-mono pointer-events-auto transition-all duration-300 transform translate-x-4 opacity-0`;
-            toast.innerHTML = `<div class="flex items-center space-x-2"><span>⚡</span><span>${escapeHtml(msg)}</span></div>`;
+            toast.className = `p-3 rounded-xl border ${borderCls} shadow-lg text-xs font-mono pointer-events-auto transition-all duration-300 transform translate-x-4 opacity-0`;
+            toast.innerHTML = `<div class="flex items-center space-x-2"><i data-lucide="bell" class="w-3.5 h-3.5"></i><span>${escapeHtml(msg)}</span></div>`;
             container.appendChild(toast);
+
+            if (window.lucide) window.lucide.createIcons({ root: toast });
 
             setTimeout(() => {
                 toast.classList.remove('translate-x-4', 'opacity-0');
@@ -906,6 +1005,11 @@
                 tvSymbol = "TETHER:XAUTUSD";
             }
             const tvInterval = interval === "1m" ? "1" : interval === "5m" ? "5" : interval === "15m" ? "15" : interval === "1h" ? "60" : interval === "4h" ? "240" : "15";
+            const isDark = document.documentElement.classList.contains('dark');
+            const theme = isDark ? "dark" : "light";
+            const bgColor = isDark ? "#080c14" : "#ffffff";
+            const toolbarBg = isDark ? "#0f1422" : "#f8fafc";
+            const gridColor = isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.04)";
 
             try {
                 if (typeof TradingView !== 'undefined') {
@@ -914,27 +1018,27 @@
                         "symbol": tvSymbol,
                         "interval": tvInterval,
                         "timezone": "Etc/UTC",
-                        "theme": "dark",
+                        "theme": theme,
                         "style": "1",
                         "locale": "en",
-                        "toolbar_bg": "#0c121e",
+                        "toolbar_bg": toolbarBg,
                         "enable_publishing": false,
                         "hide_side_toolbar": false,
                         "allow_symbol_change": true,
                         "container_id": "tradingview_main",
-                        "backgroundColor": "#080c14",
-                        "gridColor": "rgba(255, 255, 255, 0.04)",
+                        "backgroundColor": bgColor,
+                        "gridColor": gridColor,
                         "studies": [
                             "RSI@tv-basicstudies",
                             "MASimple@tv-basicstudies"
                         ]
                     });
                 } else {
-                    container.innerHTML = `<iframe src="https://s.tradingview.com/widgetembed/?symbol=${tvSymbol}&interval=${tvInterval}&theme=dark&style=1" class="w-full h-full border-0"></iframe>`;
+                    container.innerHTML = `<iframe src="https://s.tradingview.com/widgetembed/?symbol=${tvSymbol}&interval=${tvInterval}&theme=${theme}&style=1" class="w-full h-full border-0"></iframe>`;
                 }
             } catch (err) {
                 console.error("TV chart embed error", err);
-                container.innerHTML = `<iframe src="https://s.tradingview.com/widgetembed/?symbol=${tvSymbol}&interval=${tvInterval}&theme=dark&style=1" class="w-full h-full border-0"></iframe>`;
+                container.innerHTML = `<iframe src="https://s.tradingview.com/widgetembed/?symbol=${tvSymbol}&interval=${tvInterval}&theme=${theme}&style=1" class="w-full h-full border-0"></iframe>`;
             }
         }
 
@@ -944,14 +1048,14 @@
                 const btn = document.getElementById(`tf-${t}`);
                 if (btn) {
                     if (t === tf) {
-                        btn.className = 'px-2 py-0.5 text-xs font-mono rounded bg-cyan-500/20 text-cyancyan font-bold transition';
+                        btn.className = 'px-2 py-0.5 text-xs font-mono rounded bg-blue-600 text-white font-bold transition';
                     } else {
-                        btn.className = 'px-2 py-0.5 text-xs font-mono rounded text-slate-400 hover:text-white transition';
+                        btn.className = 'px-2 py-0.5 text-xs font-mono rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition';
                     }
                 }
             });
             loadTradingViewChart(activeSymbol, activeTimeframe);
-            showToast(`Timeframe changed to ${tf}`);
+            showToast(`Timeframe switched to ${tf}`);
         }
 
         function reloadChart() {
@@ -992,7 +1096,7 @@
             // Reload Chart and Orderbook
             loadTradingViewChart(activeSymbol, activeTimeframe);
             fetchOrderBook();
-            showToast(`Switched active trading pair to ${activeSymbol}`, "info");
+            showToast(`Active pair switched to ${activeSymbol}`, "info");
         }
 
         // --- Market Summary & Ticker Carousel Fetcher ---
@@ -1060,7 +1164,7 @@
                 if (chgEl) {
                     const isPos = chg >= 0;
                     chgEl.innerText = `${isPos ? '+' : ''}${chg.toFixed(2)}%`;
-                    chgEl.className = `text-xs font-bold font-mono tabular-nums ${isPos ? 'text-cyangreen' : 'text-cyanpink'}`;
+                    chgEl.className = `text-xs font-bold font-mono mono-num ${isPos ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`;
                 }
                 if (volEl && vol > 0) {
                     volEl.innerText = vol >= 1e9 ? `Vol $${(vol/1e9).toFixed(2)}B` : `Vol $${(vol/1e6).toFixed(1)}M`;
@@ -1128,10 +1232,10 @@
                 const pct = Math.min(100, Math.round((q / maxVol) * 100));
 
                 asksHtml += `
-                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-cybercardalt transition cursor-pointer" onclick="setLimitPrice(${p})">
+                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800/60 transition cursor-pointer" onclick="setLimitPrice(${p})">
                     <div class="absolute inset-y-0 right-0 depth-bar-ask" style="width: ${pct}%"></div>
-                    <span class="relative z-10 font-semibold text-cyanpink">${p >= 1 ? p.toFixed(2) : p.toFixed(4)}</span>
-                    <span class="relative z-10 text-right text-slate-300">${q >= 100 ? q.toFixed(1) : q.toFixed(3)}</span>
+                    <span class="relative z-10 font-semibold text-rose-600 dark:text-rose-400">${p >= 1 ? p.toFixed(2) : p.toFixed(4)}</span>
+                    <span class="relative z-10 text-right text-slate-600 dark:text-slate-300">${q >= 100 ? q.toFixed(1) : q.toFixed(3)}</span>
                     <span class="relative z-10 text-right text-slate-400">${total >= 1000 ? (total/1000).toFixed(1) + 'K' : total.toFixed(0)}</span>
                 </div>`;
             });
@@ -1147,10 +1251,10 @@
                 const pct = Math.min(100, Math.round((q / maxVol) * 100));
 
                 bidsHtml += `
-                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-cybercardalt transition cursor-pointer" onclick="setLimitPrice(${p})">
+                <div class="relative flex justify-between py-0.5 px-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800/60 transition cursor-pointer" onclick="setLimitPrice(${p})">
                     <div class="absolute inset-y-0 right-0 depth-bar-bid" style="width: ${pct}%"></div>
-                    <span class="relative z-10 font-semibold text-cyangreen">${p >= 1 ? p.toFixed(2) : p.toFixed(4)}</span>
-                    <span class="relative z-10 text-right text-slate-300">${q >= 100 ? q.toFixed(1) : q.toFixed(3)}</span>
+                    <span class="relative z-10 font-semibold text-emerald-600 dark:text-emerald-400">${p >= 1 ? p.toFixed(2) : p.toFixed(4)}</span>
+                    <span class="relative z-10 text-right text-slate-600 dark:text-slate-300">${q >= 100 ? q.toFixed(1) : q.toFixed(3)}</span>
                     <span class="relative z-10 text-right text-slate-400">${total >= 1000 ? (total/1000).toFixed(1) + 'K' : total.toFixed(0)}</span>
                 </div>`;
             });
@@ -1201,14 +1305,14 @@
             const execText = document.getElementById('order-exec-text');
 
             if (currentOrderSide === 'BUY') {
-                buyBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wider transition bg-emerald-500/20 text-cyangreen border border-emerald-500/40';
-                sellBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wider transition bg-transparent text-slate-400 hover:text-white';
-                execBtn.className = 'w-full py-2 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-200 bg-emerald-500/20 text-cyangreen border border-cyangreen shadow-neon-green hover:bg-emerald-500/30 flex items-center justify-center space-x-1.5';
+                buyBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wide transition bg-emerald-600 text-white shadow-sm';
+                sellBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wide transition bg-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white';
+                execBtn.className = 'w-full py-2.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-200 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center justify-center space-x-1.5';
                 execText.innerText = `EXECUTE BUY / LONG (${currentOrderType})`;
             } else {
-                sellBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wider transition bg-rose-500/20 text-cyanpink border border-rose-500/40';
-                buyBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wider transition bg-transparent text-slate-400 hover:text-white';
-                execBtn.className = 'w-full py-2 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-200 bg-rose-500/20 text-cyanpink border border-cyanpink shadow-neon-pink hover:bg-rose-500/30 flex items-center justify-center space-x-1.5';
+                sellBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wide transition bg-rose-600 text-white shadow-sm';
+                buyBtn.className = 'py-1 text-xs font-mono font-bold rounded tracking-wide transition bg-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white';
+                execBtn.className = 'w-full py-2.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-200 bg-rose-600 hover:bg-rose-700 text-white shadow-sm flex items-center justify-center space-x-1.5';
                 execText.innerText = `EXECUTE SELL / SHORT (${currentOrderType})`;
             }
         }
@@ -1221,12 +1325,12 @@
             const execText = document.getElementById('order-exec-text');
 
             if (currentOrderType === 'MARKET') {
-                mBtn.className = 'px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan font-bold border border-cyan-500/30 text-[11px]';
-                lBtn.className = 'px-2 py-0.5 rounded bg-cyberdark text-slate-400 border border-cyberborder text-[11px]';
+                mBtn.className = 'px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[11px]';
+                lBtn.className = 'px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 text-[11px]';
                 lGroup.classList.add('hidden');
             } else {
-                lBtn.className = 'px-2 py-0.5 rounded bg-cyan-500/20 text-cyancyan font-bold border border-cyan-500/30 text-[11px]';
-                mBtn.className = 'px-2 py-0.5 rounded bg-cyberdark text-slate-400 border border-cyberborder text-[11px]';
+                lBtn.className = 'px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[11px]';
+                mBtn.className = 'px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 text-[11px]';
                 lGroup.classList.remove('hidden');
                 const mid = document.getElementById('orderbook-mid-price');
                 if (mid) {
@@ -1329,13 +1433,14 @@
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const pane = document.getElementById(`tab-pane-${t}`);
                 if (t === tabId) {
-                    if (btn) btn.className = 'px-3 py-2 text-xs font-bold font-mono uppercase tracking-wider transition dock-tab-active flex items-center space-x-1.5';
+                    if (btn) btn.className = 'px-3 py-2.5 text-xs font-semibold uppercase tracking-wider transition dock-tab-active flex items-center space-x-1.5';
                     if (pane) pane.classList.remove('hidden');
                 } else {
-                    if (btn) btn.className = 'px-3 py-2 text-xs font-bold font-mono uppercase tracking-wider text-slate-400 hover:text-white transition flex items-center space-x-1.5';
+                    if (btn) btn.className = 'px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center space-x-1.5';
                     if (pane) pane.classList.add('hidden');
                 }
             });
+            if (window.lucide) window.lucide.createIcons();
         }
 
         // --- Emergency Flatten All Open Positions ---
@@ -1374,6 +1479,7 @@
             if (modal) {
                 modal.classList.toggle('hidden');
             }
+            if (window.lucide) window.lucide.createIcons();
         }
 
         // --- Global Hotkeys Listener ---
@@ -1406,7 +1512,7 @@
             else if (e.key === '6') { switchActiveSymbol('XAUTUSDT'); }
         });
 
-        // --- Latency Ping Measurement ---
+        // --- Latency Measurement ---
         async function measureLatency() {
             const start = performance.now();
             try {
@@ -1414,13 +1520,13 @@
                 const lat = Math.round(performance.now() - start);
                 const badge = document.getElementById('latency-badge');
                 if (badge) {
-                    badge.innerText = `⚡ ${lat}ms`;
+                    badge.innerText = `${lat}ms`;
                     if (lat < 50) {
-                        badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                        badge.className = 'hidden sm:inline-flex px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20';
                     } else if (lat < 150) {
-                        badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-amber-500/10 text-amber-400 border border-amber-500/20';
+                        badge.className = 'hidden sm:inline-flex px-2 py-0.5 text-[10px] font-mono rounded bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20';
                     } else {
-                        badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-rose-500/10 text-rose-400 border border-rose-500/20';
+                        badge.className = 'hidden sm:inline-flex px-2 py-0.5 text-[10px] font-mono rounded bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20';
                     }
                 }
             } catch (e) {
@@ -1431,6 +1537,10 @@
         // --- Charts Initialization ---
         function initChart() {
             const ctx = document.getElementById('equityChart').getContext('2d');
+            const isDark = document.documentElement.classList.contains('dark');
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+            const tickColor = isDark ? '#94a3b8' : '#64748b';
+
             equityChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -1438,8 +1548,8 @@
                     datasets: [{
                         label: 'Realized Cumulative PnL ($)',
                         data: [0],
-                        borderColor: '#00f0ff',
-                        backgroundColor: 'rgba(0, 240, 255, 0.08)',
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.08)',
                         fill: true,
                         tension: 0.3,
                         borderWidth: 2,
@@ -1454,8 +1564,8 @@
                     scales: {
                         x: { display: false },
                         y: {
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                            ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } }
+                            grid: { color: gridColor },
+                            ticks: { color: tickColor, font: { family: 'JetBrains Mono', size: 10 } }
                         }
                     }
                 }
@@ -1466,6 +1576,10 @@
             const el = document.getElementById('deltaBalanceChart');
             if (!el) return;
             const ctx = el.getContext('2d');
+            const isDark = document.documentElement.classList.contains('dark');
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+            const tickColor = isDark ? '#94a3b8' : '#64748b';
+
             deltaChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -1474,8 +1588,8 @@
                         {
                             label: 'Total Equity ($)',
                             data: [1000.0],
-                            borderColor: '#00e676',
-                            backgroundColor: 'rgba(0, 230, 118, 0.08)',
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.08)',
                             fill: true,
                             tension: 0.3,
                             borderWidth: 2,
@@ -1485,7 +1599,7 @@
                         {
                             label: 'Available Cash ($)',
                             data: [1000.0],
-                            borderColor: '#00f0ff',
+                            borderColor: '#3b82f6',
                             borderDash: [3, 3],
                             fill: false,
                             tension: 0.3,
@@ -1503,7 +1617,7 @@
                             position: 'top',
                             align: 'end',
                             labels: {
-                                color: '#94a3b8',
+                                color: tickColor,
                                 font: { family: 'JetBrains Mono', size: 9 },
                                 boxWidth: 10,
                                 boxHeight: 10,
@@ -1514,9 +1628,9 @@
                     scales: {
                         x: { display: false },
                         y: {
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            grid: { color: gridColor },
                             ticks: {
-                                color: '#94a3b8',
+                                color: tickColor,
                                 font: { family: 'JetBrains Mono', size: 10 },
                                 callback: function(value) { return '$' + value; }
                             }
@@ -1535,8 +1649,8 @@
             ws = new WebSocket(wsUrl);
 
             ws.onopen = () => {
-                badge.innerText = 'ONLINE // LIVE STREAM';
-                badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                badge.innerText = 'ONLINE';
+                badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20';
                 appendLog({ time: new Date().toLocaleTimeString(), level: 'INFO', msg: 'WebSocket telemetry link established.' });
             };
 
@@ -1560,8 +1674,8 @@
             };
 
             ws.onclose = () => {
-                badge.innerText = 'DISCONNECTED // RETRYING';
-                badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                badge.innerText = 'RECONNECTING';
+                badge.className = 'px-2 py-0.5 text-[10px] font-mono rounded bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20';
                 setTimeout(connectWebSocket, 3000);
             };
 
@@ -1574,27 +1688,28 @@
         function updateModeUI(mode) {
             currentMode = mode.toUpperCase();
             const btn = document.getElementById('mode-btn');
-            const icon = document.getElementById('mode-icon');
+            const iconSvg = document.getElementById('mode-icon-svg');
             const text = document.getElementById('mode-text');
             const executorBadge = document.getElementById('agent-executor-badge');
 
             if (currentMode === 'AUTONOMOUS') {
-                btn.className = 'px-3 py-1 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-300 flex items-center space-x-1.5 bg-emerald-500/20 text-cyangreen border border-cyangreen shadow-neon-green';
-                icon.innerText = '🤖';
+                btn.className = 'px-2.5 py-1 rounded-md text-xs font-semibold font-mono tracking-wide transition flex items-center space-x-1.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30';
+                if (iconSvg) iconSvg.setAttribute('data-lucide', 'bot');
                 text.innerText = 'AUTONOMOUS AI (FULL)';
                 if (executorBadge) {
                     executorBadge.innerText = 'AUTONOMOUS';
-                    executorBadge.className = 'px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-cyangreen';
+                    executorBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20';
                 }
             } else {
-                btn.className = 'px-3 py-1 rounded-lg text-xs font-bold font-mono tracking-wider transition-all duration-300 flex items-center space-x-1.5 bg-amber-500/10 text-amber-400 border border-amber-500/40 hover:bg-amber-500/20';
-                icon.innerText = '👤';
+                btn.className = 'px-2.5 py-1 rounded-md text-xs font-semibold font-mono tracking-wide transition flex items-center space-x-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20';
+                if (iconSvg) iconSvg.setAttribute('data-lucide', 'user-check');
                 text.innerText = 'HUMAN (CLICK FOR FULL AI)';
                 if (executorBadge) {
                     executorBadge.innerText = 'HUMAN';
-                    executorBadge.className = 'px-1.5 py-0.2 rounded text-[10px] font-mono bg-amber-500/20 text-amber-400';
+                    executorBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20';
                 }
             }
+            if (window.lucide) window.lucide.createIcons();
         }
 
         async function toggleMode() {
@@ -1619,12 +1734,12 @@
                 const label = document.getElementById('scan-btn-label');
                 const btn = document.getElementById('scan-toggle-btn');
                 if (isScanning) {
-                    label.innerText = '🟢 SCANNING';
-                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 flex items-center space-x-1.5';
+                    label.innerText = 'SCANNING';
+                    btn.className = 'px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono tracking-wide transition bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 flex items-center space-x-1.5';
                     showToast("Scanner RESUMED", "success");
                 } else {
-                    label.innerText = '🛑 PAUSED';
-                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 flex items-center space-x-1.5';
+                    label.innerText = 'PAUSED';
+                    btn.className = 'px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono tracking-wide transition bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20 flex items-center space-x-1.5';
                     showToast("Scanner PAUSED", "warning");
                 }
             } catch (err) {
@@ -1654,9 +1769,9 @@
                 const btn = document.getElementById(`pos-filter-${f}`);
                 if (!btn) return;
                 if (f.toUpperCase() === filter) {
-                    btn.className = 'px-2.5 py-1 rounded text-xs font-mono font-bold bg-cyan-500/20 text-cyancyan border border-cyan-500/40 transition';
+                    btn.className = 'px-2.5 py-1 rounded text-xs font-mono font-bold bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm transition';
                 } else {
-                    btn.className = 'px-2.5 py-1 rounded text-xs font-mono font-bold bg-transparent text-slate-400 hover:text-white border border-transparent transition';
+                    btn.className = 'px-2.5 py-1 rounded text-xs font-mono font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition';
                 }
             });
             renderPositionsFiltered();
@@ -1700,7 +1815,7 @@
 
             if (!list || list.length === 0) {
                 const filterDesc = filter === 'DELTA' ? 'Delta Exchange Live' : (filter === 'PAPER' ? 'Paper Virtual' : 'live or paper');
-                tbody.innerHTML = `<tr><td colspan="9" class="text-center p-6 text-slate-500">No active ${filterDesc} open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="9" class="text-center p-6 text-slate-400 dark:text-slate-500 font-sans">No active ${filterDesc} open positions. Scanner waiting for high-probability SMC liquidity sweep setup.</td></tr>`;
                 return;
             }
 
@@ -1708,36 +1823,36 @@
             list.forEach(p => {
                 const isDelta = Boolean(p.is_delta_live || p.source === 'DELTA');
                 const isLong = (p.direction || '').toUpperCase() === 'LONG';
-                const sideColor = isLong ? 'text-cyangreen bg-emerald-500/10 border-emerald-500/30' : 'text-cyanpink bg-rose-500/10 border-rose-500/30';
+                const sideColor = isLong ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30' : 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border-rose-300 dark:border-rose-500/30';
                 
                 const entry = parseFloat(p.entry_price || 0).toFixed(4);
                 const mark = parseFloat(p.current_price || p.entry_price || 0).toFixed(4);
                 const upnl = parseFloat(p.unrealized_pnl_usd !== undefined ? p.unrealized_pnl_usd : (p.current_pnl_usd || 0));
                 const pnlSign = upnl >= 0 ? '+' : '';
-                const pnlClass = upnl >= 0 ? 'text-cyangreen font-bold' : 'text-cyanpink font-bold';
-                const pnlPct = p.pnl_pct !== undefined ? `(${pnlSign}${p.pnl_pct}%)` : (p.current_r !== undefined ? `(${pnlSign}${p.current_r}R)` : '');
+                const pnlClass = upnl >= 0 ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold';
+                const pnlPct = p.pnl_pct !== undefined ? `(${pnlSign}${pnlPct}%)` : (p.current_r !== undefined ? `(${pnlSign}${p.current_r}R)` : '');
                 
                 const sizeStr = p.quantity_str || (p.quantity ? `${p.quantity}` : '1 lot');
                 const stage = p.stage || (isDelta ? 'EXCHANGE_LIVE' : 'OPEN');
 
                 const sourceBadge = isDelta
-                    ? '<span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold tracking-wider">⚡ DELTA LIVE</span>'
-                    : '<span class="px-1.5 py-0.5 rounded bg-cyan-500/10 text-slate-400 border border-cyan-500/20 text-[10px]">📑 PAPER</span>';
+                    ? '<span class="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-500/30 text-[10px] font-bold">⚡ DELTA LIVE</span>'
+                    : '<span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 text-[10px]">📑 PAPER</span>';
 
                 const actionBtn = isDelta
-                    ? `<button onclick="closeDeltaPosition('${p.symbol}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 text-[11px] font-bold transition flex items-center space-x-1 ml-auto"><span>🛑</span><span>CLOSE LIVE</span></button>`
-                    : `<button onclick="closeEarly('${p.trade_id}')" class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 text-[11px] transition ml-auto">🛑 CLOSE</button>`;
+                    ? `<button onclick="closeDeltaPosition('${p.symbol}')" class="px-2 py-1 rounded-md bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20 text-[11px] font-bold transition flex items-center space-x-1 ml-auto"><span>CLOSE LIVE</span></button>`
+                    : `<button onclick="closeEarly('${p.trade_id}')" class="px-2 py-1 rounded-md bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20 text-[11px] font-medium transition ml-auto">CLOSE</button>`;
 
                 html += `
-                <tr class="hover:bg-cybercardalt transition">
-                    <td class="p-2.5 font-bold text-white">${p.symbol}</td>
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                    <td class="p-2.5 font-bold text-slate-900 dark:text-white">${p.symbol}</td>
                     <td class="p-2.5">${sourceBadge}</td>
                     <td class="p-2.5"><span class="px-2 py-0.5 rounded border text-[11px] ${sideColor}">${p.direction}</span></td>
-                    <td class="p-2.5 text-slate-300 tabular-nums">${sizeStr}</td>
-                    <td class="p-2.5 text-slate-300 tabular-nums">$${entry}</td>
-                    <td class="p-2.5 text-slate-200 font-bold tabular-nums">$${mark}</td>
-                    <td class="p-2.5 tabular-nums ${pnlClass}">${pnlSign}$${upnl.toFixed(2)} <span class="text-[10px] font-normal text-slate-400">${pnlPct}</span></td>
-                    <td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">${stage}</span></td>
+                    <td class="p-2.5 text-slate-700 dark:text-slate-300 mono-num">${sizeStr}</td>
+                    <td class="p-2.5 text-slate-700 dark:text-slate-300 mono-num">$${entry}</td>
+                    <td class="p-2.5 text-slate-900 dark:text-slate-100 font-bold mono-num">$${mark}</td>
+                    <td class="p-2.5 mono-num ${pnlClass}">${pnlSign}$${upnl.toFixed(2)} <span class="text-[10px] font-normal text-slate-400">${pnlPct}</span></td>
+                    <td class="p-2.5"><span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px]">${stage}</span></td>
                     <td class="p-2.5 text-right">
                         ${actionBtn}
                     </td>
@@ -1773,7 +1888,7 @@
             if (titleBadge) titleBadge.innerText = `${keys.length} PENDING`;
 
             if (keys.length === 0) {
-                container.innerHTML = '<div class="text-xs text-slate-500 italic p-3 text-center bg-cyberdark rounded-lg">No pending trade confirmations.</div>';
+                container.innerHTML = '<div class="text-xs text-slate-400 dark:text-slate-500 italic p-4 text-center bg-slate-50 dark:bg-slate-900/50 rounded-lg">No pending trade confirmations.</div>';
                 return;
             }
 
@@ -1781,17 +1896,17 @@
             keys.forEach(tid => {
                 const p = pending[tid];
                 const isLong = (p.direction || '').toUpperCase() === 'LONG';
-                const sideColor = isLong ? 'text-cyangreen' : 'text-cyanpink';
+                const sideColor = isLong ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400';
 
                 html += `
-                <div class="flex items-center justify-between p-2.5 bg-cyberdark rounded-xl border border-cyberborder">
+                <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
                     <div>
-                        <div class="font-bold text-white text-xs">${p.symbol} <span class="${sideColor}">[${p.direction} ${p.timeframe || ''}]</span></div>
-                        <div class="text-[10px] text-slate-400 tabular-nums">Entry: $${p.entry_price} | SL: $${p.stop_loss} | Grade: <span class="text-cyancyan font-bold">${p.ai_grade || 'A'}</span></div>
+                        <div class="font-bold text-slate-900 dark:text-white text-xs">${p.symbol} <span class="${sideColor}">[${p.direction} ${p.timeframe || ''}]</span></div>
+                        <div class="text-[10px] text-slate-500 dark:text-slate-400 mono-num mt-0.5">Entry: $${p.entry_price} | SL: $${p.stop_loss} | Grade: <span class="text-blue-600 dark:text-blue-400 font-bold">${p.ai_grade || 'A'}</span></div>
                     </div>
                     <div class="flex items-center space-x-1.5">
-                        <button onclick="approveTrade('${tid}')" class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/40 text-xs font-bold transition">🟢 APPROVE</button>
-                        <button onclick="rejectTrade('${tid}')" class="px-2.5 py-1 rounded bg-slate-800 text-slate-400 hover:text-white text-xs transition">🔴 SKIP</button>
+                        <button onclick="approveTrade('${tid}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm">APPROVE</button>
+                        <button onclick="rejectTrade('${tid}')" class="px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 text-xs font-medium transition">SKIP</button>
                     </div>
                 </div>`;
             });
@@ -1834,12 +1949,12 @@
             const box = document.getElementById('terminal-box');
             if (!box) return;
             const line = document.createElement('div');
-            line.className = 'leading-relaxed hover:bg-white/5 px-1 rounded tabular-nums';
+            line.className = 'leading-relaxed hover:bg-slate-800/40 px-1 rounded mono-num';
 
             let lvlColor = 'text-slate-400';
-            if (item.level === 'WARNING') lvlColor = 'text-cyanyellow font-semibold';
-            if (item.level === 'ERROR' || item.level === 'CRITICAL') lvlColor = 'text-cyanpink font-bold';
-            if (item.level === 'INFO') lvlColor = 'text-cyancyan';
+            if (item.level === 'WARNING') lvlColor = 'text-amber-400 font-semibold';
+            if (item.level === 'ERROR' || item.level === 'CRITICAL') lvlColor = 'text-rose-400 font-bold';
+            if (item.level === 'INFO') lvlColor = 'text-blue-400';
 
             line.innerHTML = `<span class="text-slate-500">[${item.time || ''}]</span> <span class="${lvlColor}">${item.level || 'LOG'}</span>: ${escapeHtml(item.msg || '')}`;
             box.appendChild(line);
@@ -1878,13 +1993,13 @@
                     if (badge) {
                         if (data.status === 'CONNECTED') {
                             badge.innerText = data.mode || 'DELTA LIVE';
-                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/30';
                         } else if (data.status === 'AUTH_FAILED' || data.mode === 'DELTA AUTH ERROR') {
                             badge.innerText = 'AUTH / IP ERROR';
-                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30 animate-pulse';
                         } else {
                             badge.innerText = data.mode || 'PAPER VIRTUAL';
-                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan border border-cyan-500/30';
+                            badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30';
                         }
                     }
 
@@ -1898,7 +2013,7 @@
                     if (upnlEl) {
                         const upnl = parseFloat(data.unrealized_pnl || 0);
                         upnlEl.innerText = `${upnl >= 0 ? '+' : ''}$${upnl.toFixed(2)}`;
-                        upnlEl.className = `text-xs font-bold mono-font tabular-nums ${upnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+                        upnlEl.className = `text-xs font-bold mono-num ${upnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`;
                     }
 
                     const ratEl = document.getElementById('delta-status-rationale');
@@ -1944,9 +2059,9 @@
                     document.getElementById('fg-score-val').innerText = score;
                     const badge = document.getElementById('fg-class-badge');
                     badge.innerText = classification.toUpperCase();
-                    if (score > 60) badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-400';
-                    else if (score < 40) badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-400';
-                    else badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyancyan';
+                    if (score > 60) badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/30';
+                    else if (score < 40) badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-500/30';
+                    else badge.className = 'px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30';
                     if (sentRes.advice) document.getElementById('fg-advice-text').innerText = sentRes.advice;
                 }
 
@@ -1977,7 +2092,7 @@
                     document.getElementById('sheet-link-btn').href = statusRes.sheet_link;
                 }
                 updateAgentsUI(agentsRes);
-                renderOpenPositions(paperRes.open_positions);
+                renderOpenPositions(paperRes.open_positions, paperRes.delta_positions);
                 renderPendingApprovals(paperRes.pending_setups);
                 fetchDeltaWallet(false);
                 fetchMarketSummary();
@@ -2005,7 +2120,7 @@
                     equityChartInstance.data.datasets[0].data = dataPoints;
                     equityChartInstance.update();
                     document.getElementById('chart-net-pnl').innerText = `${cum >= 0 ? '+' : ''}$${cum.toFixed(2)}`;
-                    document.getElementById('chart-net-pnl').className = `text-xs font-bold font-mono tabular-nums ${cum >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+                    document.getElementById('chart-net-pnl').className = `text-xs font-bold font-mono mono-num ${cum >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`;
                 }
             } catch (e) {
                 console.error('Fetch latest data error', e);
@@ -2027,12 +2142,17 @@
 
         // --- DOM Initialization ---
         window.addEventListener('DOMContentLoaded', () => {
+            initTheme();
             initChart();
             initDeltaChart();
             connectWebSocket();
             loadTradingViewChart(activeSymbol, activeTimeframe);
             fetchLatestData();
             fetchOrderBook();
+
+            if (window.lucide) {
+                window.lucide.createIcons();
+            }
 
             // Setup polling intervals
             setInterval(fetchLatestData, 8000);
